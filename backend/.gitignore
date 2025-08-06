@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+pip-wheel-metadata/
+
+# Virtual environment
+venv/
+.env
+.env.*
+
+# VSCode settings (optional)
+.vscode/
+
+# OS files
+.DS_Store
+
+# Pytest / test coverage
+.coverage
+.cache/
+htmlcov/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# MyPy
+.mypy_cache/
+
+# Pydantic settings (if applicable)
+*.json
+
+# Uvicorn logs
+*.log
+
+# Local SQLite DBs (if you use them)
+*.sqlite3
+
+# Jupyter notebooks (if experimenting)
+.ipynb_checkpoints/
+
+# FastAPI Docs static build (if generated)
+static/docs/
