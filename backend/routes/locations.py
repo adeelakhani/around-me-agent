@@ -20,27 +20,53 @@ async def get_locations(
     
     print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon}")
     
-    # Create different coordinates for variety
-    coordinates = [
-        (user_lat, user_lon),  # Downtown
-        (user_lat + 0.01, user_lon + 0.01),  # North-East
-        (user_lat - 0.01, user_lon - 0.01),  # South-West  
-        (user_lat + 0.02, user_lon - 0.02),  # North-West
+    # Create different coordinates and subreddits for variety
+    import random
+    import time
+    
+    # Add some randomness to get different results each time
+    timestamp = int(time.time())
+    random.seed(timestamp)
+    
+    # Different subreddit combinations for variety
+    subreddit_combinations = [
+        ["toronto", "askTO", "torontoevents", "torontofood"],
+        ["askTO", "torontoevents", "torontofood", "toronto"],
+        ["torontoevents", "torontofood", "toronto", "askTO"],
+        ["torontofood", "toronto", "askTO", "torontoevents"],
+    ]
+    
+    # Pick a random combination
+    subreddit_combo = random.choice(subreddit_combinations)
+    
+    location_configs = [
+        {"coords": (user_lat, user_lon), "subreddit": subreddit_combo[0], "area": "Downtown"},
+        {"coords": (user_lat + 0.01, user_lon + 0.01), "subreddit": subreddit_combo[1], "area": "North-East"},
+        {"coords": (user_lat - 0.01, user_lon - 0.01), "subreddit": subreddit_combo[2], "area": "South-West"},
+        {"coords": (user_lat + 0.02, user_lon - 0.02), "subreddit": subreddit_combo[3], "area": "North-West"},
     ]
     
     # Create location objects with different Reddit data
     all_pois = []
     
-    for i, (poi_lat, poi_lon) in enumerate(coordinates):
+    for i, config in enumerate(location_configs):
+        poi_lat, poi_lon = config["coords"]
+        subreddit = config["subreddit"]
+        area = config["area"]
+        
         # Create LangGraph agent for each location
-        agent = create_summarizer_agent()
+        agent = create_summarizer_agent(subreddit)
         
         # Create location data with specific coordinates
         location_data = {
-            "name": f"Toronto Area {i+1}",
+            "name": f"{area} Toronto",
             "type": "reddit",
             "lat": poi_lat,
             "lng": poi_lon,
+            "subreddit": subreddit,
+            "city": "Toronto",
+            "province": "Ontario", 
+            "country": "Canada",
             "data": {}
         }
         
@@ -68,38 +94,19 @@ async def get_locations(
             print(f"Found {len(pois)} POIs for location {i+1}")
             
             if pois:
-                # Update the POI with the specific coordinates
+                # Use the POI with its real coordinates (don't override them)
                 poi = pois[0]
-                poi.lat = poi_lat
-                poi.lng = poi_lon
+                print(f"Using POI with real coordinates: {poi['name']} at {poi['lat']}, {poi['lng']}")
                 all_pois.append(poi)
             else:
-                print(f"No POI found for location {i+1}, using fallback")
-                # Create fallback POI
-                fallback_poi = {
-                    "name": f"Reddit - Toronto Area {i+1}",
-                    "lat": poi_lat,
-                    "lng": poi_lon,
-                    "summary": f"Local Reddit community discussions about events and activities in Toronto area {i+1}",
-                    "type": "reddit",
-                    "radius": 20
-                }
-                all_pois.append(fallback_poi)
+                print(f"No POI found for location {i+1}, skipping")
+                continue
             
         except Exception as e:
             print(f"LangGraph error for POI {i+1}: {e}")
             import traceback
             traceback.print_exc()
-            # Fallback to simple POI
-            fallback_poi = {
-                "name": f"Reddit - Toronto Area {i+1}",
-                "lat": poi_lat,
-                "lng": poi_lon,
-                "summary": f"Local Reddit community discussions about events and activities in Toronto area {i+1}",
-                "type": "reddit",
-                "radius": 20
-            }
-            all_pois.append(fallback_poi)
+            continue
     
     print(f"Returning {len(all_pois)} unique POIs")
     return all_pois

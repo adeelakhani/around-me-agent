@@ -66,7 +66,48 @@ async def scrape_reddit_local():
                 
                 if titles:
                     print(f"📝 Found {len(titles)} posts in r/{subreddit}")
-                    posts.extend([{"source": f"r/{subreddit}", "title": title} for title in titles[:5]])
+                    
+                    # Try to get usernames for each post
+                    usernames = []
+                    try:
+                        username_selectors = [
+                            "a[data-testid='post_author_link']",
+                            ".Post a[href*='/user/']",
+                            "a[href*='/user/']",
+                            ".Post span[class*='author']"
+                        ]
+                        
+                        for selector in username_selectors:
+                            try:
+                                username_elements = await page.locator(selector).all()
+                                if username_elements:
+                                    for element in username_elements[:len(titles)]:
+                                        username = await element.text_content()
+                                        if username and username.strip():
+                                            usernames.append(username.strip())
+                                        else:
+                                            usernames.append("Anonymous Redditor")
+                                    break
+                            except:
+                                continue
+                        
+                        # If we couldn't get usernames, fill with defaults
+                        while len(usernames) < len(titles):
+                            usernames.append("Anonymous Redditor")
+                            
+                    except Exception as e:
+                        print(f"⚠️ Couldn't extract usernames: {e}")
+                        usernames = ["Anonymous Redditor"] * len(titles)
+                    
+                    # Create posts with usernames
+                    for i, title in enumerate(titles[:5]):
+                        username = usernames[i] if i < len(usernames) else "Anonymous Redditor"
+                        posts.append({
+                            "source": f"r/{subreddit}",
+                            "title": title,
+                            "username": username,
+                            "engagement": "🔥 Hot" if i < 2 else "📱 Trending" if i < 4 else "💬 Active"
+                        })
                 else:
                     print(f"❌ No posts found in r/{subreddit}")
                     
