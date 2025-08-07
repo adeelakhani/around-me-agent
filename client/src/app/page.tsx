@@ -35,35 +35,37 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-gray-900 text-white rounded-lg shadow-2xl max-w-md mx-4 border border-gray-700">
+    <div className="fixed top-4 right-4 z-50 max-w-sm">
+      <div className="bg-gray-900 text-white rounded-lg shadow-2xl border border-gray-700">
         {/* Header */}
         <div className={`p-4 ${getTypeColor(location.type)} rounded-t-lg`}>
-          <div className="flex items-center space-x-3">
-            <span className="text-2xl">{getTypeIcon(location.type)}</span>
-            <div>
-              <h3 className="font-bold text-lg">{location.name}</h3>
-              <p className="text-sm opacity-90 capitalize">{location.type}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="text-2xl">{getTypeIcon(location.type)}</span>
+              <div>
+                <h3 className="font-bold text-lg">{location.name}</h3>
+                <p className="text-sm opacity-90 capitalize">{location.type}</p>
+              </div>
             </div>
+            <button 
+              onClick={onClose}
+              className="text-white hover:text-gray-200 text-xl font-bold"
+            >
+              ×
+            </button>
           </div>
         </div>
         
         {/* Content */}
         <div className="p-4">
-          <div className="text-gray-300 whitespace-pre-line leading-relaxed">
+          <div className="text-gray-300 whitespace-pre-line leading-relaxed text-sm">
             {location.summary}
           </div>
           
           {/* Footer */}
           <div className="mt-4 pt-4 border-t border-gray-700">
-            <div className="flex items-center justify-between text-sm text-gray-400">
+            <div className="text-sm text-gray-400">
               <span>📍 {location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>
-              <button 
-                onClick={onClose}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-              >
-                Close
-              </button>
             </div>
           </div>
         </div>
@@ -80,27 +82,15 @@ export default function HomePage() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
 
+  // Downtown Toronto coordinates
+  const TORONTO_LAT = 43.6532;
+  const TORONTO_LNG = -79.3832;
+  const RADIUS_KM = 20;
+
   useEffect(() => {
-    // Get user location
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords;
-          fetchLocations(latitude, longitude);
-          initializeMap(longitude, latitude);
-        },
-        (error) => {
-          console.log('Error getting location:', error);
-          // Fallback to default location
-          fetchLocations(43.6532, -79.3832);
-          initializeMap(-79.3832, 43.6532);
-        }
-      );
-    } else {
-      // Fallback to default location
-      fetchLocations(43.6532, -79.3832);
-      initializeMap(-79.3832, 43.6532);
-    }
+    // Use downtown Toronto as the center
+    fetchLocations(TORONTO_LAT, TORONTO_LNG);
+    initializeMap(TORONTO_LNG, TORONTO_LAT);
   }, []);
 
   const initializeMap = (lng: number, lat: number) => {
@@ -112,7 +102,7 @@ export default function HomePage() {
       container: mapContainer.current!,
       style: 'mapbox://styles/mapbox/navigation-night-v1',
       center: [lng, lat],
-      zoom: 13,
+      zoom: 10, // Zoomed out to show the radius better
       pitch: 45,
       bearing: 0,
       antialias: true
@@ -171,8 +161,91 @@ export default function HomePage() {
             'fill-extrusion-opacity': 0.8
           }
         });
+
+        // Add radius circle
+        addRadiusCircle(lat, lng);
       }
     });
+  };
+
+  const addRadiusCircle = (lat: number, lng: number) => {
+    if (!map.current) return;
+
+    // More accurate radius calculation
+    // 30km radius in degrees
+    // At Toronto's latitude (43.6532°), 1° latitude ≈ 111.32 km
+    // 1° longitude ≈ 111.32 * cos(43.6532°) ≈ 80.4 km
+    const radiusLatDegrees = RADIUS_KM / 111.32;
+    const radiusLngDegrees = RADIUS_KM / (111.32 * Math.cos(lat * Math.PI / 180));
+
+    // Generate circle points
+    const points: [number, number][] = [];
+    const steps = 64;
+    for (let i = 0; i <= steps; i++) {
+      const angle = (i / steps) * 2 * Math.PI;
+      const pointLat = lat + radiusLatDegrees * Math.cos(angle);
+      const pointLng = lng + radiusLngDegrees * Math.sin(angle);
+      points.push([pointLng, pointLat]);
+    }
+
+    // Create a circle geometry
+    const circle = {
+      type: 'Feature' as const,
+      properties: {},
+      geometry: {
+        type: 'Polygon' as const,
+        coordinates: [points]
+      }
+    };
+
+    // Add the circle source
+    map.current.addSource('radius-circle', {
+      type: 'geojson',
+      data: circle
+    });
+
+    // Add the circle layer
+    map.current.addLayer({
+      id: 'radius-circle-fill',
+      type: 'fill',
+      source: 'radius-circle',
+      paint: {
+        'fill-color': '#3B82F6',
+        'fill-opacity': 0.1
+      }
+    });
+
+    map.current.addLayer({
+      id: 'radius-circle-border',
+      type: 'line',
+      source: 'radius-circle',
+      paint: {
+        'line-color': '#3B82F6',
+        'line-width': 2,
+        'line-opacity': 0.8
+      }
+    });
+
+    // Add center point marker
+    const centerMarkerEl = document.createElement('div');
+    centerMarkerEl.className = 'center-marker';
+    centerMarkerEl.innerHTML = `
+      <div style="
+        width: 16px;
+        height: 16px;
+        background: #3B82F6;
+        border: 3px solid white;
+        border-radius: 50%;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      "></div>
+    `;
+
+    new mapboxgl.Marker({
+      element: centerMarkerEl,
+      anchor: 'center'
+    })
+      .setLngLat([lng, lat])
+      .addTo(map.current!);
   };
 
   const fetchLocations = async (lat: number, lon: number) => {
@@ -196,7 +269,7 @@ export default function HomePage() {
     if (!map.current) return;
 
     // Remove existing markers
-    const existingMarkers = document.querySelectorAll('.mapboxgl-marker');
+    const existingMarkers = document.querySelectorAll('.mapboxgl-marker:not(.center-marker)');
     existingMarkers.forEach(marker => marker.remove());
 
     locations.forEach((location, idx) => {
@@ -306,7 +379,7 @@ export default function HomePage() {
           <h1 className="text-2xl font-bold text-red-400 mb-4">Error</h1>
           <p className="text-gray-300">{error}</p>
           <button 
-            onClick={() => fetchLocations(43.6532, -79.3832)}
+            onClick={() => fetchLocations(TORONTO_LAT, TORONTO_LNG)}
             className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
           >
             Try Again
@@ -348,6 +421,14 @@ export default function HomePage() {
                 🧭
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Radius Info */}
+        <div className="absolute top-4 right-4 z-10 bg-white rounded-lg shadow-lg border border-gray-200 p-3">
+          <div className="text-sm text-gray-700">
+            <div className="font-semibold">Downtown Toronto</div>
+            <div className="text-xs text-gray-500">20km radius</div>
           </div>
         </div>
       </div>
