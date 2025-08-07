@@ -8,4 +8,7 @@ app.add_middleware(
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
+@app.get("/")
+def read_root():
+    return {"message": "Hello, World!"}
 # app.include_router(locations.router, prefix="/api")
