@@ -26,7 +26,7 @@ async def scrape_reddit_local():
             try:
                 await page.goto(f"https://www.reddit.com/r/{subreddit}/")
                 titles = await page.locator("h3").all_text_contents()
-                posts.extend([{"source": f"r/{subreddit}", "title": title} for title in titles[:3]])
+                posts.extend([{"source": f"r/{subreddit}", "title": title} for title in titles[:5]])
             except:
                 continue
         

@@ -10,7 +10,7 @@ def get_local_events():
     params = {
         "location.latitude": lat,
         "location.longitude": lon,
-        "location.within": "30km" 
+        "location.within": "20km" 
     }
     response = requests.get(url, headers=headers, params=params)
     return response.json()
