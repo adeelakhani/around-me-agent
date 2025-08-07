@@ -237,12 +237,22 @@ export default function HomePage() {
     try {
       setLoading(true);
       console.log('Fetching locations for:', { lat, lon });
-      const response = await fetch(`http://localhost:8000/api/locations?lat=${lat}&lon=${lon}`);
+      const response = await fetch(`http://localhost:8000/api/locations?lat=${lat}&lon=${lon}&t=${Date.now()}`);
       if (!response.ok) {
         throw new Error('Failed to fetch locations');
       }
       const data = await response.json();
       console.log('Received data from backend:', data);
+      console.log('Backend data details:');
+      data.forEach((location: Location, index: number) => {
+        console.log(`Location ${index + 1}:`, {
+          name: location.name,
+          lat: location.lat,
+          lng: location.lng,
+          type: location.type,
+          summary: location.summary?.substring(0, 100) + '...'
+        });
+      });
       setLocations(data);
       addMarkersToMap(data);
     } catch (err) {
@@ -271,9 +281,20 @@ export default function HomePage() {
         lngType: typeof location.lng
       });
 
-      // Ensure coordinates are numbers
+      // Ensure coordinates are numbers and validate them
       const lat = Number(location.lat);
       const lng = Number(location.lng);
+      
+      // Validate coordinates
+      if (isNaN(lat) || isNaN(lng)) {
+        console.error(`Invalid coordinates for ${location.name}: lat=${location.lat}, lng=${location.lng}`);
+        return;
+      }
+      
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        console.error(`Coordinates out of range for ${location.name}: lat=${lat}, lng=${lng}`);
+        return;
+      }
       
       console.log(`Parsed coordinates: lat=${lat} (${typeof lat}), lng=${lng} (${typeof lng})`);
 
@@ -304,6 +325,7 @@ export default function HomePage() {
       markerEl.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log('Marker clicked:', location.name);
+        console.log('Setting selected location with coordinates:', { lat: location.lat, lng: location.lng });
         setSelectedLocation(location);
       });
     });
