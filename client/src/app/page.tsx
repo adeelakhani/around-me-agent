@@ -16,11 +16,11 @@ interface Location {
 const LocationPopup = ({ location, onClose }: { location: Location; onClose: () => void }) => {
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'weather': return '🌤️';
-      case 'event': return '🎉';
-      case 'news': return '📰';
-      case 'reddit': return '💬';
-      default: return '📍';
+      case 'weather': return 'W';
+      case 'event': return 'E';
+      case 'news': return 'N';
+      case 'reddit': return 'R';
+      default: return '•';
     }
   };
 
@@ -65,7 +65,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
           {/* Footer */}
           <div className="mt-4 pt-4 border-t border-gray-700">
             <div className="text-sm text-gray-400">
-              <span>📍 {location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>
+              <span>{location.lat.toFixed(4)}, {location.lng.toFixed(4)}</span>
             </div>
           </div>
         </div>
@@ -89,6 +89,7 @@ export default function HomePage() {
 
   useEffect(() => {
     // Use downtown Toronto as the center
+    console.log('Initializing map with Toronto coordinates:', { lat: TORONTO_LAT, lng: TORONTO_LNG });
     fetchLocations(TORONTO_LAT, TORONTO_LNG);
     initializeMap(TORONTO_LNG, TORONTO_LAT);
   }, []);
@@ -108,28 +109,12 @@ export default function HomePage() {
       antialias: true
     });
 
+    console.log('Map initialized with center:', [lng, lat]);
+
     map.current.on('load', () => {
       console.log('Map loaded');
       
       if (map.current) {
-        // Add terrain
-        map.current.addSource('mapbox-terrain', {
-          'type': 'vector',
-          'url': 'mapbox://mapbox.mapbox-terrain-v2'
-        });
-        
-        map.current.addLayer({
-          'id': 'terrain',
-          'type': 'hillshade',
-          'source': 'mapbox-terrain',
-          'source-layer': 'terrain',
-          'paint': {
-            'hillshade-shadow-color': '#000000',
-            'hillshade-highlight-color': '#FFFFFF',
-            'hillshade-accent-color': '#000000'
-          }
-        });
-        
         // Add 3D building extrusions
         map.current.addLayer({
           'id': '3d-buildings',
@@ -251,11 +236,13 @@ export default function HomePage() {
   const fetchLocations = async (lat: number, lon: number) => {
     try {
       setLoading(true);
+      console.log('Fetching locations for:', { lat, lon });
       const response = await fetch(`http://localhost:8000/api/locations?lat=${lat}&lon=${lon}`);
       if (!response.ok) {
         throw new Error('Failed to fetch locations');
       }
       const data = await response.json();
+      console.log('Received data from backend:', data);
       setLocations(data);
       addMarkersToMap(data);
     } catch (err) {
@@ -268,107 +255,72 @@ export default function HomePage() {
   const addMarkersToMap = (locations: Location[]) => {
     if (!map.current) return;
 
+    console.log('Adding markers for locations:', locations);
+
     // Remove existing markers
     const existingMarkers = document.querySelectorAll('.mapboxgl-marker:not(.center-marker)');
     existingMarkers.forEach(marker => marker.remove());
 
     locations.forEach((location, idx) => {
-      // Create marker element with always-visible label
+      console.log(`Creating marker ${idx + 1}:`, {
+        name: location.name,
+        lat: location.lat,
+        lng: location.lng,
+        type: location.type,
+        latType: typeof location.lat,
+        lngType: typeof location.lng
+      });
+
+      // Ensure coordinates are numbers
+      const lat = Number(location.lat);
+      const lng = Number(location.lng);
+      
+      console.log(`Parsed coordinates: lat=${lat} (${typeof lat}), lng=${lng} (${typeof lng})`);
+
+      // Create a simple colored circle marker
       const markerEl = document.createElement('div');
-      markerEl.className = 'marker-container';
-      markerEl.innerHTML = `
-        <div class="marker-icon">${getMarkerColor(location.type)}</div>
-        <div class="marker-label">
-          <div class="label-bg">
-            <span class="label-text">${location.name}</span>
-          </div>
-        </div>
-      `;
-      
-      // Add styles for the marker
-      markerEl.style.position = 'relative';
+      markerEl.style.width = '32px';
+      markerEl.style.height = '32px';
+      markerEl.style.backgroundColor = getMarkerColor(location.type);
+      markerEl.style.border = '3px solid white';
+      markerEl.style.borderRadius = '50%';
+      markerEl.style.boxShadow = '0 4px 8px rgba(0,0,0,0.5)';
       markerEl.style.cursor = 'pointer';
-      markerEl.style.userSelect = 'none';
       markerEl.style.zIndex = '1000';
-      
-      // Style the marker icon
-      const iconEl = markerEl.querySelector('.marker-icon') as HTMLElement;
-      if (iconEl) {
-        iconEl.style.fontSize = '32px';
-        iconEl.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))';
-        iconEl.style.display = 'block';
-        iconEl.style.textAlign = 'center';
-      }
-      
-      // Style the label
-      const labelEl = markerEl.querySelector('.marker-label') as HTMLElement;
-      if (labelEl) {
-        labelEl.style.position = 'absolute';
-        labelEl.style.top = '-50px';
-        labelEl.style.left = '50%';
-        labelEl.style.transform = 'translateX(-50%)';
-        labelEl.style.whiteSpace = 'nowrap';
-        labelEl.style.zIndex = '1001';
-        labelEl.style.pointerEvents = 'none';
-      }
-      
-      const labelBgEl = markerEl.querySelector('.label-bg') as HTMLElement;
-      if (labelBgEl) {
-        labelBgEl.style.background = 'rgba(0,0,0,0.9)';
-        labelBgEl.style.color = 'white';
-        labelBgEl.style.padding = '6px 10px';
-        labelBgEl.style.borderRadius = '6px';
-        labelBgEl.style.fontSize = '11px';
-        labelBgEl.style.fontWeight = '600';
-        labelBgEl.style.backdropFilter = 'blur(8px)';
-        labelBgEl.style.border = '1px solid rgba(255,255,255,0.2)';
-        labelBgEl.style.maxWidth = '200px';
-        labelBgEl.style.overflow = 'hidden';
-        labelBgEl.style.textOverflow = 'ellipsis';
-      }
 
       // Create and add marker with proper positioning
       const marker = new mapboxgl.Marker({
         element: markerEl,
-        anchor: 'bottom'
+        anchor: 'center'
       })
-        .setLngLat([location.lng, location.lat])
+        .setLngLat([lng, lat])
         .addTo(map.current!);
 
-      // Debug: Log marker position
-      console.log(`Marker ${location.name}:`, { lat: location.lat, lng: location.lng });
+      console.log(`Marker ${location.name} positioned at:`, [lng, lat]);
+      console.log(`Raw coordinates from backend: lat=${location.lat}, lng=${location.lng}`);
+      console.log(`Mapbox expects: [longitude, latitude] = [${lng}, ${lat}]`);
 
-      // Add click event to the entire marker element
+      // Add click event
       markerEl.addEventListener('click', (e) => {
         e.stopPropagation();
         console.log('Marker clicked:', location.name);
         setSelectedLocation(location);
       });
-
-      // Also add click event to the marker icon specifically
-      const iconElement = markerEl.querySelector('.marker-icon') as HTMLElement;
-      if (iconElement) {
-        iconElement.addEventListener('click', (e) => {
-          e.stopPropagation();
-          console.log('Marker icon clicked:', location.name);
-          setSelectedLocation(location);
-        });
-      }
     });
   };
 
   const getMarkerColor = (type: string) => {
     switch (type) {
       case 'weather':
-        return '🔵';
+        return '#3B82F6'; // Blue
       case 'event':
-        return '🟢';
+        return '#10B981'; // Green
       case 'news':
-        return '🟡';
+        return '#F59E0B'; // Yellow
       case 'reddit':
-        return '🟠';
+        return '#F97316'; // Orange
       default:
-        return '📍';
+        return '#6B7280'; // Gray
     }
   };
 
