@@ -15,11 +15,13 @@ jsonpatch==1.33
 jsonpointer==3.0.0
 langchain-core==0.3.72
 langchain-openai==0.3.28
+langchain-community==0.3.72
 langgraph==0.6.3
 langgraph-checkpoint==2.1.1
 langgraph-prebuilt==0.6.3
 langgraph-sdk==0.2.0
 langsmith==0.4.12
+nest-asyncio==1.6.0
 openai==1.99.1
 orjson==3.11.1
 ormsgpack==1.10.0
