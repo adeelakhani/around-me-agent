@@ -113,17 +113,30 @@ After extracting, you will search for coordinates of any locations mentioned."""
             # Step 3: Search for coordinates of locations mentioned
             system_message = """You are a web scraping expert. Now search for coordinates of locations mentioned in the Reddit posts.
 
-IMPORTANT: Use the browser to search for exact coordinates of places mentioned.
+IMPORTANT: Use the browser to search for exact coordinates of places mentioned. When you navigate to Google Maps, look for coordinates in the URL or business details.
 """
             user_message = """Based on the Reddit content you extracted, identify any specific locations mentioned (restaurants, venues, parks, etc.) and search for their exact coordinates.
 
 For each location mentioned:
-1. Navigate to Google Maps or a similar mapping service
-2. Search for the exact location name + "Toronto, Ontario"
-3. Extract the exact latitude and longitude coordinates
-4. Verify the location is actually in Toronto, Ontario, Canada
+1. Navigate to Google Maps (maps.google.com)
+2. Search for the EXACT location name + "Toronto, Ontario, Canada"
+3. Look for the official business listing with the blue "Business" badge
+4. Click on the business listing to get detailed information
+5. Extract the exact latitude and longitude coordinates from the URL or business details
+6. Verify the location is actually in Toronto, Ontario, Canada
+7. Double-check that the coordinates match the actual business/venue mentioned
 
-Only search for real, specific locations that were actually mentioned in the Reddit posts."""
+COORDINATE EXTRACTION METHODS:
+- From Google Maps URL: Look for @lat,lng in the URL (e.g., @43.6532,-79.3832)
+- From business details: Look for "Coordinates" or "Location" information
+- From page source: Search for "latitude" and "longitude" in the page content
+
+If Google Maps doesn't work, try:
+- Google Earth (earth.google.com)
+- Apple Maps (maps.apple.com)
+- OpenStreetMap (openstreetmap.org)
+
+IMPORTANT: Make sure you're getting coordinates for the exact place mentioned, not a similar name or nearby location. Look for official business listings with verified addresses."""
             
             messages = [
                 SystemMessage(content=system_message),
@@ -166,6 +179,9 @@ CRITICAL REQUIREMENTS:
 - This POI must be UNIQUE and different from any other POIs created
 - If you didn't find coordinates for a real location, don't create a POI
 - DO NOT make up coordinates - only use the ones you found from your search
+- VERIFY that the coordinates point to the actual business/venue mentioned, not a residential address or similar location
+- Before creating the POI, double-check that the coordinates match the actual place name mentioned
+- VALIDATE coordinates: lat should be between 43.5-44.0, lng should be between -79.5 to -79.0 for Toronto
 
 The POI should have:
 - A name based on the actual place mentioned (restaurant, venue, park, etc.)
