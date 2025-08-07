@@ -1,103 +1,195 @@
-import Image from "next/image";
+'use client';
+import { useEffect, useState, useRef } from 'react';
+import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 
-export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+interface Location {
+  lat: number;
+  lng: number;
+  name: string;
+  summary: string;
+  type: string;
+  radius: number;
+}
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+export default function HomePage() {
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const map = useRef<mapboxgl.Map | null>(null);
+
+  useEffect(() => {
+    // Get user location
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          fetchLocations(latitude, longitude);
+          initializeMap(longitude, latitude);
+        },
+        (error) => {
+          console.log('Error getting location:', error);
+          // Fallback to default location
+          fetchLocations(43.6532, -79.3832);
+          initializeMap(-79.3832, 43.6532);
+        }
+      );
+    } else {
+      // Fallback to default location
+      fetchLocations(43.6532, -79.3832);
+      initializeMap(-79.3832, 43.6532);
+    }
+  }, []);
+
+  const initializeMap = (lng: number, lat: number) => {
+    if (map.current) return; // Initialize map only once
+
+    mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || 'pk.test';
+    
+    map.current = new mapboxgl.Map({
+      container: mapContainer.current!,
+      style: 'mapbox://styles/mapbox/outdoors-v12',
+      center: [lng, lat],
+      zoom: 12,
+      pitch: 60,
+      bearing: 0,
+      antialias: true
+    });
+
+    map.current.on('load', () => {
+      console.log('Map loaded');
+    });
+  };
+
+  const fetchLocations = async (lat: number, lon: number) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`http://localhost:8000/api/locations?lat=${lat}&lon=${lon}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch locations');
+      }
+      const data = await response.json();
+      setLocations(data);
+      addMarkersToMap(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addMarkersToMap = (locations: Location[]) => {
+    if (!map.current) return;
+
+    // Remove existing markers
+    const existingMarkers = document.querySelectorAll('.mapboxgl-marker');
+    existingMarkers.forEach(marker => marker.remove());
+
+    locations.forEach((location, idx) => {
+      // Create marker element
+      const markerEl = document.createElement('div');
+      markerEl.className = 'marker';
+      markerEl.innerHTML = getMarkerColor(location.type);
+      markerEl.style.fontSize = '24px';
+      markerEl.style.cursor = 'pointer';
+      markerEl.style.userSelect = 'none';
+
+      // Create popup
+      const popup = new mapboxgl.Popup({ offset: 25 })
+        .setHTML(`
+          <div class="p-2 max-w-xs">
+            <h3 class="font-bold text-lg mb-2">${location.name}</h3>
+            <div class="text-sm text-gray-600 whitespace-pre-line">
+              ${location.summary}
+            </div>
+            <div class="text-xs text-gray-500 mt-2">
+              Type: ${location.type}
+            </div>
+          </div>
+        `);
+
+      // Create and add marker
+      const marker = new mapboxgl.Marker(markerEl)
+        .setLngLat([location.lng, location.lat])
+        .setPopup(popup)
+        .addTo(map.current!);
+
+      // Add click event
+      markerEl.addEventListener('click', () => {
+        setSelectedLocation(location);
+      });
+    });
+  };
+
+  const getMarkerColor = (type: string) => {
+    switch (type) {
+      case 'weather':
+        return '🔵';
+      case 'event':
+        return '🟢';
+      case 'news':
+        return '🟡';
+      case 'reddit':
+        return '🟠';
+      default:
+        return '📍';
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-600 mb-4">Error</h1>
+          <p className="text-gray-600">{error}</p>
+          <button 
+            onClick={() => fetchLocations(43.6532, -79.3832)}
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Try Again
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen w-screen relative">
+      {loading && (
+        <div className="absolute top-4 left-4 z-10 bg-white p-4 rounded-lg shadow-lg">
+          <div className="flex items-center space-x-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+            <span>Loading local data...</span>
+          </div>
+        </div>
+      )}
+      
+      <div ref={mapContainer} className="h-full w-full" />
+      
+      {/* Legend */}
+      <div className="absolute bottom-4 left-4 bg-white p-3 rounded-lg shadow-lg">
+        <h4 className="font-bold mb-2">Legend</h4>
+        <div className="space-y-1 text-sm">
+          <div className="flex items-center space-x-2">
+            <span>🔵</span>
+            <span>Weather</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span>🟢</span>
+            <span>Events</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span>🟡</span>
+            <span>News</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span>🟠</span>
+            <span>Reddit</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
