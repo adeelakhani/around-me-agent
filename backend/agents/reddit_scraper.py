@@ -49,6 +49,7 @@ class State(TypedDict):
     extracted_pois: Optional[List[POI]]
     city: Optional[str]
 
+
 def create_reddit_scraper_agent(subreddit="askTO"):
     print(f"Creating LangGraph Reddit scraper for r/{subreddit}...")
     
@@ -247,8 +248,10 @@ DO NOT extract:
 
 For each place, provide:
 - name: The exact name of the place
-- description: A brief description of what makes it special (based on Reddit mentions)
+- description: ACTUAL USER QUOTES from Reddit about this place. Include what real users said, like "amazing food", "best view in the city", "hidden gem", etc. Use their exact words when possible.
 - category: The type of place (restaurant, museum, park, attraction, etc.)
+
+IMPORTANT: For the description, extract real user opinions and quotes from the Reddit content, not generic descriptions.
 
 Return 5-8 of the most specific places mentioned."""
         
@@ -263,6 +266,8 @@ Return 5-8 of the most specific places mentioned."""
             response = llm_with_structured_output.invoke(messages)
             pois = response.pois
             print(f"Extracted {len(pois)} POIs: {[poi.name for poi in pois]}")
+            
+
             
             return {
                 "extracted_pois": pois,
@@ -353,51 +358,25 @@ Return 5-8 of the most specific places mentioned."""
                     continue
                 
                 if coords:
-                    # Create engaging summary based on Reddit context with variety
-                    summary_styles = [
-                        f"""Create a cool, engaging summary about {poi.name} based on Reddit buzz.
 
-Make it sound like insider knowledge from r/{subreddit}. Use phrases like:
-- "Redditors are buzzing about..."
-- "The r/{subreddit} community loves..."
-- "Local Reddit users recommend..."
-- "According to the {city} Reddit scene..."
-
-Keep it under 150 characters and make it exciting! Focus on why this place is worth visiting.""",
-                        
-                        f"""You are a local {city} expert creating concise summaries of popular places.
-
-Write in a casual, insider tone like you're sharing local secrets. Use phrases like:
-- "This spot is a local favorite for..."
-- "You'll find locals raving about..."
-- "The {city} crowd swears by..."
-- "Hidden gem alert: this place..."
-
-Keep it under 150 characters and focus on what makes it unique.""",
-                        
-                        f"""You are creating short, punchy summaries for {city} hotspots.
-
-Write like a friend giving you the inside scoop. Use phrases like:
-- "This is where {city} locals go for..."
-- "Skip the tourist traps, hit this spot for..."
-- "The real {city} experience is at..."
-- "Trust me, this place is worth the hype for..."
-
-Keep it under 150 characters and be specific about what makes it special."""
-                    ]
                     
-                    # Use unique randomization for each POI to avoid repetition
-                    random.seed(time.time() + hash(poi.name))
-                    system_message = random.choice(summary_styles)
-                    print(f"🎯 Using summary style {summary_styles.index(system_message) + 1} for {poi.name}")
+                    # Create summary that incorporates actual user quotes
+                    system_message = f"""Create a concise summary using real Reddit user quotes about {poi.name}.
+
+Use the actual user quotes provided. Format as a single flowing sentence like:
+"Reddit users say [quote] and describe it as [user words]" 
+OR
+"According to r/{subreddit}, locals rave about [specific user mentions]"
+
+Keep it under 300 characters, make it flow naturally, and use the users' exact words. NO bullet points or lists."""
                     
                     user_message = f"""Location: {poi.name}
 Category: {poi.category}
-Description: {poi.description}
+Real User Quotes/Opinions: {poi.description}
 City: {city}
 Subreddit: r/{subreddit}
 
-Create an engaging 1-sentence summary about what makes this place special according to Reddit users."""
+Create a summary that showcases what real Reddit users actually said about this place. Use their quotes and opinions."""
                     
                     try:
                         summary_messages = [
@@ -406,7 +385,9 @@ Create an engaging 1-sentence summary about what makes this place special accord
                         ]
                         
                         summary_response = llm.invoke(summary_messages)
-                        summary = summary_response.content.strip()[:200]  # Limit length
+                        summary = summary_response.content.strip()[:400]  # Increased length limit
+                        
+
                         
                         # Create POI
                         poi_output = POIOutput(
@@ -419,16 +400,17 @@ Create an engaging 1-sentence summary about what makes this place special accord
                         )
                         
                         final_pois.append(poi_output.model_dump())
-                        print(f"Created POI: {poi.name} at ({coords['lat']}, {coords['lng']})")
+                        print(f"✅ Created POI: {poi.name} at ({coords['lat']}, {coords['lng']})")
                         
                     except Exception as e:
                         print(f"Error creating POI summary for {poi.name}: {e}")
-                        # Fallback summary
+                        # Fallback summary using the original user description
+                        user_description = poi.description[:250] if poi.description else f"Popular {poi.category} mentioned by r/{subreddit} users"
                         poi_output = POIOutput(
                             name=poi.name,
                             lat=coords['lat'],
                             lng=coords['lng'],
-                            summary=f"Popular {poi.category} mentioned by r/{subreddit} community",
+                            summary=f"Reddit users say: {user_description}",
                             type="reddit", 
                             radius=20
                         )
