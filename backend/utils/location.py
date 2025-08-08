@@ -29,16 +29,4 @@ def get_location_name(lat: float, lon: float) -> str:
     #     return data["features"][0]["text"]
     # return "Unknown Location"
 
-def get_radius_coordinates(lat: float, lon: float, radius_km: int = 20) -> Dict:
-    """Calculate bounding box for 20km radius"""
-    lat_delta = radius_km / 111.0
-    lon_delta = radius_km / (111.0 * abs(lat) / 90.0)
-    
-    return {
-        "min_lat": lat - lat_delta,
-        "max_lat": lat + lat_delta,
-        "min_lon": lon - lon_delta,
-        "max_lon": lon + lon_delta,
-        "center_lat": lat,
-        "center_lon": lon
-    }
+

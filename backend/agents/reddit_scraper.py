@@ -50,8 +50,8 @@ class State(TypedDict):
     city: Optional[str]
 
 
-def create_reddit_scraper_agent(subreddit="askTO"):
-    print(f"Creating LangGraph Reddit scraper for r/{subreddit}...")
+def create_reddit_scraper_agent(subreddit="askTO", city="Toronto"):
+    print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
     
     # Initialize tools and LLM
     async_browser = create_async_playwright_browser(headless=True)

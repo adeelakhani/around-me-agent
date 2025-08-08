@@ -85,7 +85,7 @@ export default function HomePage() {
   // Downtown Toronto coordinates
   const TORONTO_LAT = 43.6532;
   const TORONTO_LNG = -79.3832;
-  const RADIUS_KM = 20;
+  const RADIUS_KM = 8; // Adjust this value to change boundary size
 
   useEffect(() => {
     // Use downtown Toronto as the center
@@ -101,9 +101,9 @@ export default function HomePage() {
     
     map.current = new mapboxgl.Map({
       container: mapContainer.current!,
-      style: 'mapbox://styles/mapbox/navigation-night-v1',
+      style: 'mapbox://styles/adeel712/cme2f1k6500rc01s7fmh93ciq',
       center: [lng, lat],
-      zoom: 10, // Zoomed out to show the radius better
+      zoom: 18, // Much more zoomed in
       pitch: 45,
       bearing: 0,
       antialias: true
@@ -114,103 +114,72 @@ export default function HomePage() {
     map.current.on('load', () => {
       console.log('Map loaded');
       
-      if (map.current) {
-        // Add 3D building extrusions
-        map.current.addLayer({
-          'id': '3d-buildings',
-          'source': 'composite',
-          'source-layer': 'building',
-          'filter': ['==', 'extrude', 'true'],
-          'type': 'fill-extrusion',
-          'minzoom': 15,
-          'paint': {
-            'fill-extrusion-color': '#404040',
-            'fill-extrusion-height': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15,
-              0,
-              15.05,
-              ['get', 'height']
-            ],
-            'fill-extrusion-base': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15,
-              0,
-              15.05,
-              ['get', 'min_height']
-            ],
-            'fill-extrusion-opacity': 0.8
-          }
-        });
+              if (map.current) {
+          // Wait for the map to be fully loaded
+          map.current.on('idle', () => {
+            if (!map.current) return;
+            console.log('Custom Mapbox style loaded');
+          });
+          
+          // Add 3D building extrusions with better visibility
+          map.current.addLayer({
+            'id': '3d-buildings',
+            'source': 'composite',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+              'fill-extrusion-color': '#3a3a3a',
+              'fill-extrusion-height': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                15,
+                0,
+                15.05,
+                ['get', 'height']
+              ],
+              'fill-extrusion-base': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                15,
+                0,
+                15.05,
+                ['get', 'min_height']
+              ],
+              'fill-extrusion-opacity': 0.9
+            }
+          });
 
-        // Add radius circle
-        addRadiusCircle(lat, lng);
-      }
+          // Add map constraints to keep view within 10km radius
+          addMapConstraints(lat, lng);
+        }
     });
   };
 
-  const addRadiusCircle = (lat: number, lng: number) => {
+  const addMapConstraints = (lat: number, lng: number) => {
     if (!map.current) return;
 
-    // More accurate radius calculation
-    // 30km radius in degrees
+    // Calculate the bounds for 10km radius
     // At Toronto's latitude (43.6532°), 1° latitude ≈ 111.32 km
     // 1° longitude ≈ 111.32 * cos(43.6532°) ≈ 80.4 km
     const radiusLatDegrees = RADIUS_KM / 111.32;
     const radiusLngDegrees = RADIUS_KM / (111.32 * Math.cos(lat * Math.PI / 180));
 
-    // Generate circle points
-    const points: [number, number][] = [];
-    const steps = 64;
-    for (let i = 0; i <= steps; i++) {
-      const angle = (i / steps) * 2 * Math.PI;
-      const pointLat = lat + radiusLatDegrees * Math.cos(angle);
-      const pointLng = lng + radiusLngDegrees * Math.sin(angle);
-      points.push([pointLng, pointLat]);
-    }
+    // Calculate bounds
+    const bounds = [
+      [lng - radiusLngDegrees, lat - radiusLatDegrees], // Southwest
+      [lng + radiusLngDegrees, lat + radiusLatDegrees]  // Northeast
+    ] as [[number, number], [number, number]];
 
-    // Create a circle geometry
-    const circle = {
-      type: 'Feature' as const,
-      properties: {},
-      geometry: {
-        type: 'Polygon' as const,
-        coordinates: [points]
-      }
-    };
-
-    // Add the circle source
-    map.current.addSource('radius-circle', {
-      type: 'geojson',
-      data: circle
-    });
-
-    // Add the circle layer
-    map.current.addLayer({
-      id: 'radius-circle-fill',
-      type: 'fill',
-      source: 'radius-circle',
-      paint: {
-        'fill-color': '#3B82F6',
-        'fill-opacity': 0.1
-      }
-    });
-
-    map.current.addLayer({
-      id: 'radius-circle-border',
-      type: 'line',
-      source: 'radius-circle',
-      paint: {
-        'line-color': '#3B82F6',
-        'line-width': 2,
-        'line-opacity': 0.8
-      }
-    });
-
+    // Set the map bounds to constrain the view
+    map.current.setMaxBounds(bounds);
+    
+    // Also set a maximum zoom level to prevent zooming out too far
+    map.current.setMaxZoom(16);
+    
     // Add center point marker
     const centerMarkerEl = document.createElement('div');
     centerMarkerEl.className = 'center-marker';
@@ -368,10 +337,31 @@ export default function HomePage() {
       {/* Map Container */}
       <div className="h-full w-full relative">
         {loading && (
-          <div className="absolute top-4 left-4 z-10 bg-gray-800 text-white p-4 rounded-lg shadow-lg border border-gray-700">
-            <div className="flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-              <span>Loading local data...</span>
+          <div className="absolute inset-0 z-50 bg-gray-900 bg-opacity-95 backdrop-blur-sm flex items-center justify-center">
+            <div className="text-center">
+              {/* Animated Logo/Icon */}
+              <div className="mb-6">
+                <div className="relative w-16 h-16 mx-auto">
+                  <div className="absolute inset-0 bg-blue-500 rounded-full animate-pulse"></div>
+                  <div className="absolute inset-2 bg-gray-900 rounded-full"></div>
+                  <div className="absolute inset-4 bg-blue-400 rounded-full animate-bounce"></div>
+                </div>
+              </div>
+              
+              {/* Loading Text */}
+              <div className="text-white text-xl font-light mb-2">
+                Discovering your area
+              </div>
+              <div className="text-gray-400 text-sm">
+                Finding the best local spots
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="mt-6 w-48 mx-auto">
+                <div className="bg-gray-700 rounded-full h-1 overflow-hidden">
+                  <div className="bg-blue-500 h-1 rounded-full animate-pulse" style={{width: '60%'}}></div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -402,7 +392,7 @@ export default function HomePage() {
         <div className="absolute top-4 right-4 z-10 bg-white rounded-lg shadow-lg border border-gray-200 p-3">
           <div className="text-sm text-gray-700">
             <div className="font-semibold">Downtown Toronto</div>
-            <div className="text-xs text-gray-500">20km radius</div>
+            <div className="text-xs text-gray-500">{RADIUS_KM}km radius</div>
           </div>
         </div>
       </div>

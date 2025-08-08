@@ -1,7 +1,7 @@
 # backend/routes/locations.py
 from fastapi import APIRouter, Query
 from agents.reddit_scraper import create_reddit_scraper_agent
-from utils.location import get_user_location, get_radius_coordinates
+from utils.location import get_user_location, get_location_name
 import asyncio
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -18,7 +18,10 @@ async def get_locations(
     else:
         user_lat, user_lon = get_user_location()
     
-    print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon}")
+    # Get city name from coordinates
+    city = get_location_name(user_lat, user_lon)
+    
+    print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon} in {city}")
     
     # Create different coordinates and subreddits for variety
     import random
@@ -28,22 +31,17 @@ async def get_locations(
     timestamp = int(time.time())
     random.seed(timestamp)
     
-    # Different subreddit combinations for variety - focus on local knowledge
-    # Use just the main city subreddit for faster, universal results
-    subreddit_combinations = [
-        ["toronto"]  # Just use r/toronto for now, can be made dynamic later
-    ]
-    
-    # Pick a random combination
-    subreddit_combo = random.choice(subreddit_combinations)
-    print(f"=== USING SUBREDDIT COMBINATION ===")
-    print(f"Combination: {subreddit_combo}")
+    # Simple rule: r/{city}
+    subreddit = city.lower()
+    print(f"=== USING SUBREDDIT ===")
+    print(f"City: {city}")
+    print(f"Subreddit: r/{subreddit}")
     print(f"Timestamp: {timestamp}")
     print("=" * 50)
     
     # Use just one location for faster results
     location_configs = [
-        {"coords": (user_lat, user_lon), "subreddit": subreddit_combo[0], "area": "Downtown"},
+        {"coords": (user_lat, user_lon), "subreddit": subreddit, "area": "Downtown"},
     ]
     
     # Create location objects with different Reddit data
@@ -55,10 +53,9 @@ async def get_locations(
         area = config["area"]
         
         # Create LangGraph agent for each location
-        agent = create_reddit_scraper_agent(subreddit)
+        agent = create_reddit_scraper_agent(subreddit, city)
         
         # Create location data with specific coordinates
-        city = "Toronto"  # Use Toronto since we're in Toronto coordinates
         location_data = {
             "name": f"{area} {city}",
             "type": "reddit",
@@ -118,13 +115,3 @@ async def get_locations(
     print(f"Returning {len(all_pois)} unique POIs")
     return all_pois
 
-@router.get("/user-location")
-async def get_user_location_endpoint():
-    lat, lon = get_user_location()
-    radius_coords = get_radius_coordinates(lat, lon, 20)
-    return {
-        "lat": lat,
-        "lon": lon,
-        "radius_km": 20,
-        "bounding_box": radius_coords
-    }
