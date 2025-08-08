@@ -1,7 +1,7 @@
 # backend/routes/locations.py
 from fastapi import APIRouter, Query
-from agents.summarizer import create_summarizer_agent
-from utils.location import get_user_location, get_radius_coordinates, get_location_name
+from agents.reddit_scraper import create_reddit_scraper_agent
+from utils.location import get_user_location, get_radius_coordinates
 import asyncio
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -28,22 +28,22 @@ async def get_locations(
     timestamp = int(time.time())
     random.seed(timestamp)
     
-    # Different subreddit combinations for variety
+    # Different subreddit combinations for variety - focus on local knowledge
+    # Use just the main city subreddit for faster, universal results
     subreddit_combinations = [
-        ["toronto", "askTO", "torontoevents", "torontofood"],
-        ["askTO", "torontoevents", "torontofood", "toronto"],
-        ["torontoevents", "torontofood", "toronto", "askTO"],
-        ["torontofood", "toronto", "askTO", "torontoevents"],
+        ["toronto"]  # Just use r/toronto for now, can be made dynamic later
     ]
     
     # Pick a random combination
     subreddit_combo = random.choice(subreddit_combinations)
+    print(f"=== USING SUBREDDIT COMBINATION ===")
+    print(f"Combination: {subreddit_combo}")
+    print(f"Timestamp: {timestamp}")
+    print("=" * 50)
     
+    # Use just one location for faster results
     location_configs = [
         {"coords": (user_lat, user_lon), "subreddit": subreddit_combo[0], "area": "Downtown"},
-        {"coords": (user_lat + 0.01, user_lon + 0.01), "subreddit": subreddit_combo[1], "area": "North-East"},
-        {"coords": (user_lat - 0.01, user_lon - 0.01), "subreddit": subreddit_combo[2], "area": "South-West"},
-        {"coords": (user_lat + 0.02, user_lon - 0.02), "subreddit": subreddit_combo[3], "area": "North-West"},
     ]
     
     # Create location objects with different Reddit data
@@ -55,16 +55,17 @@ async def get_locations(
         area = config["area"]
         
         # Create LangGraph agent for each location
-        agent = create_summarizer_agent(subreddit)
+        agent = create_reddit_scraper_agent(subreddit)
         
         # Create location data with specific coordinates
+        city = "Toronto"  # Use Toronto since we're in Toronto coordinates
         location_data = {
-            "name": f"{area} Toronto",
+            "name": f"{area} {city}",
             "type": "reddit",
             "lat": poi_lat,
             "lng": poi_lon,
             "subreddit": subreddit,
-            "city": "Toronto",
+            "city": city,
             "province": "Ontario", 
             "country": "Canada",
             "data": {}
@@ -75,16 +76,17 @@ async def get_locations(
             "messages": [],
             "location_data": location_data,
             "reddit_data": [],
-            "weather_data": {},
-            "events_data": [],
-            "news_data": [],
-            "summary": None,
-            "current_step": "start",
-            "pois": []
+            "current_step": "scrape_reddit",
+            "pois": [],
+            "subreddit": subreddit,
+            "city": city,
+            "scraped_content": None,
+            "extracted_pois": []
         }
         
         print(f"Invoking LangGraph agent for POI {i+1} at coordinates {poi_lat}, {poi_lon}...")
         try:
+            # Call the compiled workflow
             result = agent.invoke(initial_state, config={"recursion_limit": 50})
             print(f"LangGraph result keys: {list(result.keys())}")
             print(f"LangGraph messages count: {len(result.get('messages', []))}")
@@ -94,10 +96,15 @@ async def get_locations(
             print(f"Found {len(pois)} POIs for location {i+1}")
             
             if pois:
-                # Use the POI with its real coordinates (don't override them)
-                poi = pois[0]
-                print(f"Using POI with real coordinates: {poi['name']} at {poi['lat']}, {poi['lng']}")
-                all_pois.append(poi)
+                print(f"=== FOUND {len(pois)} POIs FOR LOCATION {i+1} ===")
+                # Add ALL POIs found, not just the first one
+                for j, poi in enumerate(pois):
+                    print(f"POI {i+1}.{j+1}: {poi['name']} at {poi['lat']}, {poi['lng']}")
+                    print(f"Summary: {poi['summary'][:100]}...")
+                    print(f"Subreddit: {subreddit}")
+                    print(f"Area: {area}")
+                    print("-" * 30)
+                    all_pois.append(poi)
             else:
                 print(f"No POI found for location {i+1}, skipping")
                 continue
