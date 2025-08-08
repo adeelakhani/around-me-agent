@@ -301,8 +301,11 @@ Return 5-8 of the most specific places mentioned."""
                 print(f"Getting coordinates for: {poi.name}")
                 
                 try:
-                    # Search using Serper.dev
-                    search_query = f"{poi.name} {location_name} {country} coordinates latitude longitude"
+                    # Search using Serper.dev - more specific search
+                    # Get country from location_data or default to Canada
+                    country = location_data.get('country', 'Canada')
+                    province = location_data.get('province', 'Ontario')
+                    search_query = f"{poi.name} {city} {province} {country} exact location coordinates"
                     print(f"🔍 Searching: {search_query}")
                     
                     search_results = search_serper(search_query)
@@ -331,7 +334,7 @@ Return 5-8 of the most specific places mentioned."""
                     llm_with_coords = llm.with_structured_output(Coordinates)
                     
                     coord_response = llm_with_coords.invoke([
-                        SystemMessage(content="Extract the latitude and longitude coordinates from this search result text. Look for coordinate patterns like 43.1234, -79.1234 or similar formats. If no coordinates found, return 0.0 for both lat and lng."),
+                        SystemMessage(content="Extract the EXACT latitude and longitude coordinates for the specific place mentioned. Look for coordinate patterns like 43.1234, -79.1234. If the coordinates are for the general city area (like city center) and not the specific place, return 0.0 for both lat and lng. Only return coordinates if they are specifically for the exact location."),
                         HumanMessage(content=search_text)
                     ])
                     

@@ -1,7 +1,7 @@
 # backend/routes/locations.py
 from fastapi import APIRouter, Query
 from agents.reddit_scraper import create_reddit_scraper_agent
-from utils.location import get_user_location, get_location_name
+from utils.location import get_user_location, get_location_name, get_location_details
 import asyncio
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -18,10 +18,13 @@ async def get_locations(
     else:
         user_lat, user_lon = get_user_location()
     
-    # Get city name from coordinates
-    city = get_location_name(user_lat, user_lon)
+    # Get location details from coordinates
+    location_details = get_location_details(user_lat, user_lon)
+    city = location_details["city"]
+    province = location_details["province"]
+    country = location_details["country"]
     
-    print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon} in {city}")
+    print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon} in {city}, {province}, {country}")
     
     # Create different coordinates and subreddits for variety
     import random
@@ -63,8 +66,8 @@ async def get_locations(
             "lng": poi_lon,
             "subreddit": subreddit,
             "city": city,
-            "province": "Ontario", 
-            "country": "Canada",
+            "province": province, 
+            "country": country,
             "data": {}
         }
         
