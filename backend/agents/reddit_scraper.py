@@ -16,6 +16,7 @@ import nest_asyncio
 from collections import Counter
 import os
 import random
+from utils.location import is_coordinates_in_city
 
 nest_asyncio.apply()
 
@@ -339,12 +340,18 @@ Return 5-8 of the most specific places mentioned."""
                     ])
                     
                     if coord_response.lat != 0.0 and coord_response.lng != 0.0:
-                        coords = {
-                            'lat': coord_response.lat,
-                            'lng': coord_response.lng,
-                            'address': f"{poi.name}, {city}"
-                        }
-                        print(f"✅ Found coordinates for {poi.name}: ({coords['lat']}, {coords['lng']})")
+                        # Check if coordinates are within the detected city bounds
+                        if is_coordinates_in_city(coord_response.lat, coord_response.lng, city):
+                            coords = {
+                                'lat': coord_response.lat,
+                                'lng': coord_response.lng,
+                                'address': f"{poi.name}, {city}"
+                            }
+                            print(f"✅ Found coordinates for {poi.name}: ({coords['lat']}, {coords['lng']}) - VALIDATED")
+                        else:
+                            print(f"❌ Coordinates for {poi.name} are outside {city} bounds - REJECTED")
+                            coords = None
+                            continue
                     else:
                         print(f"❌ No coordinates found for {poi.name}")
                         coords = None

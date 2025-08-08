@@ -104,4 +104,52 @@ def get_location_details(lat: float, lon: float) -> dict:
             "country": "Canada"
         }
 
+def is_coordinates_in_city(lat: float, lon: float, city_name: str) -> bool:
+    """Check if coordinates are within the detected city bounds."""
+    mapbox_token = os.getenv("MAPBOX_ACCESS_TOKEN")
+    if not mapbox_token:
+        print("⚠️ MAPBOX_ACCESS_TOKEN not found, skipping city bounds check")
+        return True  # Skip check if no token
+    
+    try:
+        # Search for the city to get its bounds
+        url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{city_name}.json"
+        params = {
+            "access_token": mapbox_token,
+            "types": "place",
+            "limit": 1
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("features"):
+            feature = data["features"][0]
+            bbox = feature.get("bbox")  # [min_lon, min_lat, max_lon, max_lat]
+            
+            if bbox:
+                min_lon, min_lat, max_lon, max_lat = bbox
+                
+                # Check if coordinates are within city bounds
+                in_bounds = (min_lon <= lon <= max_lon) and (min_lat <= lat <= max_lat)
+                
+                if in_bounds:
+                    print(f"✅ Coordinates ({lat}, {lon}) are within {city_name} bounds")
+                else:
+                    print(f"❌ Coordinates ({lat}, {lon}) are outside {city_name} bounds")
+                    print(f"   City bounds: {min_lon}, {min_lat} to {max_lon}, {max_lat}")
+                
+                return in_bounds
+            else:
+                print(f"⚠️ No bounds found for {city_name}, skipping check")
+                return True
+        else:
+            print(f"⚠️ City {city_name} not found, skipping bounds check")
+            return True
+            
+    except Exception as e:
+        print(f"❌ Error checking city bounds: {e}")
+        return True  # Skip check on error
+
 
