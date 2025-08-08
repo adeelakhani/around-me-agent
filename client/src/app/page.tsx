@@ -82,9 +82,9 @@ export default function HomePage() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
 
-  // Downtown Toronto coordinates
-  const TORONTO_LAT = 43.6532;
-  const TORONTO_LNG = -79.3832;
+  // Your exact location coordinates
+  const TORONTO_LAT = 43.844107;
+  const TORONTO_LNG = -79.106474;
   const RADIUS_KM = 8; // Adjust this value to change boundary size
 
   useEffect(() => {
