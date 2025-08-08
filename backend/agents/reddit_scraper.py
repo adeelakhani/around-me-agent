@@ -15,6 +15,7 @@ import time
 import nest_asyncio
 from collections import Counter
 import os
+import random
 
 nest_asyncio.apply()
 
@@ -102,16 +103,29 @@ CRITICAL INSTRUCTIONS:
 
 You MUST use the browser tools. Do not respond without using the tools first."""
             
-            # Use different search terms to get variety
+            # Always include underground spots in the mix
+            print("🔍 Including underground/hidden spots in search")
+            
+            # Mix of popular and underground spots
             search_terms = [
                 f"things%20to%20do%20{city}",
                 f"best%20places%20{city}",
                 f"cool%20spots%20{city}",
-                f"hidden%20gems%20{city}",
-                f"must%20visit%20{city}",
                 f"attractions%20{city}",
-                f"restaurants%20{city}",
-                f"activities%20{city}"
+                f"activities%20{city}",
+                # Underground/unknown spots
+                f"hidden%20gems%20{city}",
+                f"underrated%20{city}",
+                f"secret%20spots%20{city}",
+                f"local%20favorites%20{city}",
+                f"off%20the%20beaten%20path%20{city}",
+                f"unknown%20places%20{city}",
+                f"lowkey%20spots%20{city}",
+                f"insider%20tips%20{city}",
+                f"not%20touristy%20{city}",
+                f"local%20secrets%20{city}",
+                f"underground%20{city}",
+                f"hidden%20spots%20{city}"
             ]
             
             # Pick a random search term for variety
@@ -197,9 +211,23 @@ Use the extract_text tool to get everything you can see. If the page is empty or
                 "messages": [HumanMessage(content="No content found to extract POIs from")]
             }
         
+        # Always prioritize a mix of popular and underground spots
+        focus_instruction = f"""
+PRIORITY: Mix of popular attractions and underground/hidden spots.
+Look for mentions of:
+- Popular attractions and landmarks
+- "hidden gem", "secret spot", "local favorite", "underrated"
+- Places that locals recommend but aren't touristy
+- Small, independent businesses and venues
+- Off-the-beaten-path locations
+- Insider recommendations and local secrets
+"""
+        
         system_message = f"""You are an expert at identifying specific places mentioned in Reddit posts about things to do in {city}.
 
 From the scraped Reddit content, extract specific, real places that people recommend visiting in {city}. 
+
+{focus_instruction}
 
 Look for ANY mentions of:
 - Restaurants, cafes, bars, food spots
@@ -358,8 +386,10 @@ Write like a friend giving you the inside scoop. Use phrases like:
 Keep it under 150 characters and be specific about what makes it special."""
                     ]
                     
-                    import random
+                    # Use unique randomization for each POI to avoid repetition
+                    random.seed(time.time() + hash(poi.name))
                     system_message = random.choice(summary_styles)
+                    print(f"🎯 Using summary style {summary_styles.index(system_message) + 1} for {poi.name}")
                     
                     user_message = f"""Location: {poi.name}
 Category: {poi.category}
