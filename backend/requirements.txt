@@ -21,6 +21,7 @@ langgraph-checkpoint==2.1.1
 langgraph-prebuilt==0.6.3
 langgraph-sdk==0.2.0
 langsmith==0.4.12
+lxml==6.0.0
 nest-asyncio==1.6.0
 openai==1.99.1
 orjson==3.11.1

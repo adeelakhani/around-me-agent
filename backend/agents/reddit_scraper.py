@@ -17,7 +17,9 @@ from collections import Counter
 import os
 import random
 from utils.location import is_coordinates_in_city
+from dotenv import load_dotenv
 
+load_dotenv(override=True)
 nest_asyncio.apply()
 
 # Define structured output for POI data
@@ -56,7 +58,8 @@ def create_reddit_scraper_agent(subreddit="askTO", city="Toronto"):
     print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
     
     # Initialize tools and LLM
-    async_browser = create_async_playwright_browser(headless=True)
+    from langchain_community.tools.playwright.utils import create_async_playwright_browser
+    async_browser = create_async_playwright_browser(headless=False)  # Use async browser
     toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
     tools = toolkit.get_tools()
     print(f"Got {len(tools)} Playwright tools: {[tool.name for tool in tools]}")
@@ -104,7 +107,8 @@ CRITICAL INSTRUCTIONS:
 4. Extract ALL text content including post titles, comments, and recommendations
 5. If the page doesn't load or has no content, extract whatever you can find
 
-You MUST use the browser tools. Do not respond without using the tools first."""
+You MUST use BOTH browser tools in sequence: first navigate_browser, then extract_text.
+Do not respond without using both tools."""
             
             # Always include underground spots in the mix
             print("🔍 Including underground/hidden spots in search")
@@ -143,7 +147,9 @@ Then extract ALL text content from the page, including:
 - Comments mentioning specific places
 - Any business names, attractions, or venues mentioned
 
-Use the extract_text tool to get everything you can see. If the page is empty or doesn't load, extract whatever text is available."""
+Use the extract_text tool to get everything you can see. If the page is empty or doesn't load, extract whatever text is available.
+
+IMPORTANT: You must call extract_text after navigating to get the page content."""
             
             messages = [
                 SystemMessage(content=system_message),
@@ -225,6 +231,13 @@ Use the extract_text tool to get everything you can see. If the page is empty or
             print("✅ Content contains Reddit-specific elements - authentic content detected!")
         else:
             print("⚠️ Content doesn't seem to be from Reddit - might be cached/static data")
+            # If we don't have real Reddit content, don't extract fake POIs
+            print("❌ Skipping POI extraction - no authentic Reddit content found")
+            return {
+                "extracted_pois": [],
+                "current_step": "geocode_pois",
+                "messages": [HumanMessage(content="No authentic Reddit content found - skipping POI extraction")]
+            }
         
         # Always prioritize a mix of popular and underground spots
         focus_instruction = f"""
@@ -558,6 +571,282 @@ Create an authentic summary using the actual Reddit content above. Use real user
     
     print("LangGraph workflow compiled successfully!")
     return workflow.compile()
+
+async def get_reddit_pois_direct(city: str, province: str, country: str, lat: float, lng: float) -> list:
+    """Direct Reddit scraper using LangGraph with proper async browser tools"""
+    import random  # Move import here to avoid scope issues
+    
+    print(f"Starting LangGraph Reddit scraper for {city}...")
+    
+    # Initialize tools and LLM
+    from langchain_community.tools.playwright.utils import create_async_playwright_browser
+    async_browser = create_async_playwright_browser(headless=False)  # Use async browser
+    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
+    tools = toolkit.get_tools()
+    print(f"Got {len(tools)} Playwright tools: {[tool.name for tool in tools]}")
+    
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    
+    # Create LangGraph workflow
+    from langgraph.graph import StateGraph, END
+    from typing import TypedDict, Annotated, List, Any, Optional
+    from langgraph.prebuilt import ToolNode
+    
+    # Define state
+    class RedditState(TypedDict):
+        messages: Annotated[List[Any], add_messages]
+        current_step: str
+        scraped_content: Optional[str]
+        extracted_pois: Optional[List[Any]]
+        city: str
+        subreddit: str
+        search_term: str
+    
+    # Create tool node
+    tool_node = ToolNode(tools)
+    
+    # Define nodes
+    async def scrape_reddit_node(state: RedditState) -> RedditState:
+        """Navigate to Reddit and scrape content"""
+        print(f"🔍 Scraping r/{state['subreddit']} for things to do in {state['city']}...")
+        
+        # Navigate to Reddit search
+        url = f"https://www.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=relevance&t=all"
+        
+        # Use navigate tool
+        navigate_tool = next(tool for tool in tools if tool.name == "navigate_browser")
+        await navigate_tool.arun({"url": url})
+        
+        # Wait for content to load
+        import asyncio
+        await asyncio.sleep(3)
+        
+        # Extract text content from search results
+        extract_tool = next(tool for tool in tools if tool.name == "extract_text")
+        content = await extract_tool.arun({})
+        
+        print(f"📄 Extracted search results length: {len(content)} characters")
+        
+        return {
+            **state,
+            "scraped_content": content,
+            "current_step": "click_posts"
+        }
+    
+    async def click_posts_node(state: RedditState) -> RedditState:
+        """Extract content from multiple Reddit posts on the search results page"""
+        print("🖱️ Extracting content from multiple Reddit posts...")
+        
+        import asyncio
+        get_elements_tool = next(tool for tool in tools if tool.name == "get_elements")
+        extract_tool = next(tool for tool in tools if tool.name == "extract_text")
+        
+        # Extract content from the first few posts directly from search results
+        detailed_content = []
+        
+        # Get all post containers on the search results page
+        print("🔍 Finding post containers on search results page...")
+        
+        # Try different selectors for post containers
+        container_selectors = [
+            '[data-testid="post-container"]',
+            '[data-testid="post"]',
+            'div[data-testid*="post"]',
+            'article[data-testid*="post"]'
+        ]
+        
+        post_containers = []
+        for selector in container_selectors:
+            try:
+                containers = await get_elements_tool.arun({"selector": selector})
+                if containers:
+                    post_containers = containers
+                    print(f"✅ Found {len(containers)} post containers with selector: {selector}")
+                    break
+            except Exception as e:
+                print(f"❌ Selector {selector} failed: {e}")
+                continue
+        
+        if not post_containers:
+            print("⚠️ No post containers found, trying alternative approach...")
+            # Extract all content and let the LLM parse it
+            all_content = await extract_tool.arun({})
+            detailed_content.append(f"=== SEARCH RESULTS CONTENT ===\n{all_content}\n")
+        else:
+            # Extract content from the first 3 post containers
+            for i in range(min(3, len(post_containers))):
+                try:
+                    print(f"📖 Extracting content from post {i+1}/{min(3, len(post_containers))}")
+                    
+                    # Try to extract content from this specific post container
+                    post_selector = f'{container_selectors[0]}:nth-of-type({i+1})'
+                    
+                    # Get the text content of this post
+                    post_content = await extract_tool.arun({"selector": post_selector})
+                    
+                    if post_content and len(post_content) > 200:
+                        detailed_content.append(f"=== POST {i+1} CONTENT ===\n{post_content}\n")
+                        print(f"✅ Extracted {len(post_content)} characters from post {i+1}")
+                    else:
+                        print(f"⚠️ Post {i+1} had insufficient content")
+                        
+                except Exception as e:
+                    print(f"❌ Error extracting post {i+1}: {e}")
+                    continue
+        
+        # If we didn't get enough content from individual posts, extract all content
+        if len(detailed_content) < 2:
+            print("🔄 Extracting all content from search results page...")
+            all_content = await extract_tool.arun({})
+            detailed_content.append(f"=== ALL SEARCH RESULTS ===\n{all_content}\n")
+        
+        # Combine all content
+        all_content = state.get("scraped_content", "") + "\n\n" + "\n".join(detailed_content)
+        print(f"📄 Total detailed content length: {len(all_content)} characters")
+        
+        return {
+            **state,
+            "scraped_content": all_content,
+            "current_step": "extract_pois"
+        }
+    
+    async def extract_pois_node(state: RedditState) -> RedditState:
+        """Extract POIs from scraped content"""
+        content = state.get("scraped_content", "")
+        
+        if not content:
+            print("❌ No content to extract POIs from")
+            return {**state, "extracted_pois": [], "current_step": "end"}
+        
+        # Check if content looks like Reddit
+        reddit_indicators = ['reddit.com', 'r/', 'upvote', 'downvote', 'comment', 'post', 'OP', 'edit:', 'deleted']
+        has_reddit_content = any(indicator in content.lower() for indicator in reddit_indicators)
+        
+        if has_reddit_content:
+            print("✅ Content contains Reddit-specific elements - authentic content detected!")
+        else:
+            print("❌ Content doesn't seem to be from Reddit")
+            return {**state, "extracted_pois": [], "current_step": "end"}
+        
+        # Use LLM to extract POIs
+        llm_with_structured_output = llm.with_structured_output(POIList)
+        
+        extract_messages = [
+            SystemMessage(content=f"""You are an expert at identifying specific places mentioned in detailed Reddit posts about things to do in {state['city']}.
+
+From the scraped Reddit content, extract specific, real places that people recommend visiting in {state['city']}. Look for detailed mentions in both original posts and comments.
+
+Look for ANY mentions of:
+- Restaurants, cafes, bars, food spots with specific names
+- Museums, galleries, cultural venues
+- Parks, trails, outdoor spaces
+- Shopping centers, markets, boutiques
+- Entertainment venues, theaters, cinemas
+- Tourist attractions, landmarks
+- Local businesses and services
+- Neighborhoods, districts, areas
+- Any specific place names with locations
+
+For each place, provide:
+- name: The exact name of the place
+- description: Brief category description (e.g., "Popular restaurant", "Hidden gem cafe")
+- category: The type of place (restaurant, museum, park, attraction, etc.)
+- reddit_context: The EXACT Reddit content (posts/comments) that mention this place
+
+Return 8-12 of the most specific places mentioned with detailed context."""),
+            HumanMessage(content=f"Extract specific places from this detailed Reddit content about {state['city']}:\n\n{content[:8000]}")
+        ]
+        
+        pois_response = await llm_with_structured_output.ainvoke(extract_messages)
+        pois = pois_response.pois
+        print(f"Extracted {len(pois)} POIs: {[poi.name for poi in pois]}")
+        
+        return {
+            **state,
+            "extracted_pois": pois,
+            "current_step": "end"
+        }
+    
+    # Create workflow
+    workflow = StateGraph(RedditState)
+    
+    # Add nodes
+    workflow.add_node("scrape_reddit", scrape_reddit_node)
+    workflow.add_node("click_posts", click_posts_node) # Add the new node
+    workflow.add_node("extract_pois", extract_pois_node)
+    
+    # Add edges
+    workflow.add_edge("scrape_reddit", "click_posts") # Add the new edge
+    workflow.add_edge("click_posts", "extract_pois")
+    workflow.add_edge("extract_pois", END)
+    
+    # Add START edge
+    workflow.set_entry_point("scrape_reddit")
+    
+    # Compile workflow
+    app = workflow.compile()
+    
+    # Simple subreddit selection
+    subreddit = city.lower()
+    
+    # Search terms
+    search_terms = [
+        f"things%20to%20do%20{city}",
+        f"best%20places%20{city}",
+        f"hidden%20gems%20{city}",
+        f"secret%20spots%20{city}",
+        f"local%20favorites%20{city}"
+    ]
+    
+    search_term = random.choice(search_terms)
+    
+    print(f"🔍 Using search term: {search_term}")
+    
+    try:
+        # Run LangGraph workflow
+        initial_state = {
+            "messages": [],
+            "current_step": "scrape_reddit",
+            "scraped_content": None,
+            "extracted_pois": None,
+            "city": city,
+            "subreddit": subreddit,
+            "search_term": search_term
+        }
+        
+        print("🤖 Starting LangGraph workflow...")
+        result = await app.ainvoke(initial_state)
+        
+        pois = result.get("extracted_pois", [])
+        if not pois:
+            print("❌ No POIs extracted from LangGraph workflow")
+            return []
+        
+        # Convert to POI format with geocoding
+        final_pois = []
+        for poi in pois:
+            # Simple fallback coordinates with variation
+            lat_variation = random.uniform(-0.01, 0.01)
+            lng_variation = random.uniform(-0.01, 0.01)
+            
+            poi_output = {
+                "name": poi.name,
+                "lat": lat + lat_variation,
+                "lng": lng + lng_variation,
+                "summary": f"Reddit users recommend: {poi.reddit_context[:300]}...",  # More context
+                "type": "reddit",
+                "radius": 20
+            }
+            final_pois.append(poi_output)
+        
+        print(f"✅ Created {len(final_pois)} Reddit POIs with LangGraph workflow")
+        return final_pois
+        
+    except Exception as e:
+        print(f"❌ Error in LangGraph Reddit scraper: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 # Usage example
 def main():

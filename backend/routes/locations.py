@@ -1,7 +1,7 @@
 # backend/routes/locations.py
 from fastapi import APIRouter, Query
 from reddit.service import get_reddit_pois
-from agents.news_scraper import get_news_for_city
+from news.service import get_news_pois
 from utils.location import get_user_location, get_location_details
 import asyncio
 from dotenv import load_dotenv
@@ -28,13 +28,13 @@ async def get_locations(
     all_pois = []
     
     # Get Reddit POIs
-    reddit_pois = get_reddit_pois(city, province, country, user_lat, user_lon)
+    reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
     all_pois.extend(reddit_pois)
     
-    # Also get news POIs for the same location
+    # Get News POIs using the new service structure
     print(f"🗞️ Fetching news for {city}, {province}, {country}")
     try:
-        news_pois = get_news_for_city(city, province, country, user_lat, user_lon)
+        news_pois = get_news_pois(city, province, country, user_lat, user_lon)
         print(f"✅ Found {len(news_pois)} news POIs")
         all_pois.extend(news_pois)  # Add news POIs to the list
     except Exception as e:
