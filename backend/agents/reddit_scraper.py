@@ -18,6 +18,7 @@ import os
 import random
 from utils.location import is_coordinates_in_city
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 load_dotenv(override=True)
 nest_asyncio.apply()
@@ -53,6 +54,176 @@ class State(TypedDict):
     extracted_pois: Optional[List[POI]]
     city: Optional[str]
 
+def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
+    """Extract Reddit post URLs from plain text content using regex patterns"""
+    try:
+        post_urls = []
+        
+        # Look for Reddit post patterns in plain text
+        # These patterns match the format of Reddit post URLs that might appear in text
+        url_patterns = [
+            # Full URLs
+            r'https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            r'https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            r'https://www\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            # Relative URLs
+            r'/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            # Post IDs (common in Reddit text)
+            r'comments/([\w]+)/[\w\-\_]+',
+        ]
+        
+        for pattern in url_patterns:
+            matches = re.findall(pattern, text_content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # If it's a tuple (from group capture), take the first element
+                    match = match[0] if match else ""
+                
+                if match:
+                    # Normalize URL
+                    if match.startswith('/r/'):
+                        full_url = f"https://old.reddit.com{match}"
+                    elif match.startswith('http'):
+                        full_url = match
+                    elif 'comments/' in match:
+                        # This is a post ID, construct the URL
+                        full_url = f"https://old.reddit.com/r/toronto/comments/{match}"
+                    else:
+                        full_url = f"https://old.reddit.com{match}"
+                    
+                    # Clean up the URL
+                    full_url = full_url.split('?')[0]  # Remove query parameters
+                    full_url = full_url.rstrip('/')  # Remove trailing slash
+                    
+                    if full_url not in post_urls and '/comments/' in full_url:
+                        post_urls.append(full_url)
+        
+        return list(set(post_urls))  # Remove duplicates
+        
+    except Exception as e:
+        print(f"Error extracting Reddit URLs from text: {e}")
+        return []
+
+async def extract_reddit_post_urls_from_playwright(page) -> List[str]:
+    """Extract Reddit post URLs using direct Playwright methods (WORKING METHOD)"""
+    try:
+        post_urls = []
+        
+        # Use Playwright's direct methods to get all links with href containing '/comments/'
+        comment_links = await page.query_selector_all("a[href*='/comments/']")
+        
+        for link in comment_links:
+            try:
+                href = await link.get_attribute('href')
+                if href and 'reddit.com' in href:
+                    # Normalize URL
+                    if href.startswith('/'):
+                        full_url = f"https://old.reddit.com{href}"
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        full_url = f"https://old.reddit.com{href}"
+                    
+                    # Clean up the URL
+                    full_url = full_url.split('?')[0].rstrip('/')
+                    
+                    if full_url not in post_urls:
+                        post_urls.append(full_url)
+            except Exception as e:
+                continue
+        
+        return list(set(post_urls))  # Remove duplicates
+        
+    except Exception as e:
+        print(f"Error extracting URLs with Playwright: {e}")
+        return []
+
+def extract_reddit_post_urls_from_elements(elements: List[Dict]) -> List[str]:
+    """Extract Reddit post URLs from Playwright elements"""
+    try:
+        post_urls = []
+        
+        for element in elements:
+            if isinstance(element, dict):
+                # Check for href attribute
+                href = element.get('href', '')
+                if '/comments/' in href:
+                    # Normalize URL
+                    if href.startswith('/'):
+                        full_url = f"https://old.reddit.com{href}"
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        full_url = f"https://old.reddit.com{href}"
+                    
+                    # Clean up the URL
+                    full_url = full_url.split('?')[0].rstrip('/')
+                    
+                    if full_url not in post_urls:
+                        post_urls.append(full_url)
+        
+        return list(set(post_urls))
+        
+    except Exception as e:
+        print(f"Error extracting URLs from elements: {e}")
+        return []
+
+def extract_reddit_post_urls(html_content: str) -> List[str]:
+    """Extract Reddit post URLs from HTML content using BeautifulSoup"""
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        post_urls = []
+        
+        # Look for links that contain /comments/ pattern
+        links = soup.find_all('a', href=True)
+        
+        for link in links:
+            href = link.get('href', '')
+            if '/comments/' in href and 'reddit.com' in href:
+                # Normalize URL
+                if href.startswith('/'):
+                    full_url = f"https://old.reddit.com{href}"
+                elif href.startswith('http'):
+                    full_url = href
+                else:
+                    full_url = f"https://old.reddit.com{href}"
+                
+                # Clean up the URL
+                full_url = full_url.split('?')[0]  # Remove query parameters
+                full_url = full_url.rstrip('/')  # Remove trailing slash
+                
+                if full_url not in post_urls:
+                    post_urls.append(full_url)
+        
+        # Also try regex patterns as backup
+        url_patterns = [
+            r'https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            r'https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            r'/r/\w+/comments/[\w]+/[\w\-\_]+/?',
+            r'href="(/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
+            r'href="(https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
+            r'href="(https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
+        ]
+        
+        for pattern in url_patterns:
+            matches = re.findall(pattern, html_content)
+            for match in matches:
+                if match.startswith('/r/'):
+                    full_url = f"https://old.reddit.com{match}"
+                elif match.startswith('http'):
+                    full_url = match
+                else:
+                    full_url = f"https://old.reddit.com{match}"
+                
+                full_url = full_url.split('?')[0].rstrip('/')
+                if full_url not in post_urls:
+                    post_urls.append(full_url)
+        
+        return list(set(post_urls))  # Remove duplicates
+        
+    except Exception as e:
+        print(f"Error extracting Reddit URLs: {e}")
+        return []
 
 def create_reddit_scraper_agent(subreddit="askTO", city="Toronto"):
     print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
@@ -405,15 +576,22 @@ IMPORTANT RULES:
 2. Include actual user quotes and opinions from the Reddit posts
 3. Make it sound natural and conversational, like a local giving you insider tips
 4. Keep it under 300 characters
-5. Start with something like "Reddit users love..." or "According to r/{subreddit}..." or "Locals say..."
+5. ALWAYS start with Reddit-specific phrases like:
+   - "Reddit users love..."
+   - "According to r/{subreddit}..."
+   - "Locals say..."
+   - "r/{subreddit} recommends..."
+   - "The community loves..."
 6. Include specific details mentioned by users (food quality, atmosphere, prices, etc.)
 7. If users mention it's a "hidden gem" or "underrated", include that
 8. Make it feel like real insider knowledge from the community
+9. Include Reddit-specific terms like "upvoted", "recommended", "community favorite"
 
 Format examples:
 - "Reddit users love the [specific dish] here and say it's a hidden gem for [reason]"
 - "According to r/{subreddit}, this place has [specific feature] and locals rave about [specific aspect]"
 - "Locals say this is the best [category] in the area, especially for [specific reason]"
+- "r/{subreddit} community highly recommends this spot for [specific reason]"
 
 DO NOT use generic phrases like "great food" or "nice atmosphere" unless users actually said those words."""
                     
@@ -610,22 +788,31 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
         """Navigate to Reddit and scrape content"""
         print(f"🔍 Scraping r/{state['subreddit']} for things to do in {state['city']}...")
         
-        # Navigate to Reddit search
-        url = f"https://www.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=relevance&t=all"
+        # Try different old Reddit search URLs
+        search_urls = [
+            f"https://old.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=relevance&t=all",
+            f"https://old.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=hot&t=all",
+            f"https://old.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=new&t=all",
+            f"https://old.reddit.com/r/{state['subreddit']}/top/?q={state['search_term']}&restrict_sr=on&t=all"
+        ]
         
-        # Use navigate tool
+        # Use the first URL for now
+        search_url = search_urls[0]
+        
         navigate_tool = next(tool for tool in tools if tool.name == "navigate_browser")
-        await navigate_tool.arun({"url": url})
+        extract_tool = next(tool for tool in tools if tool.name == "extract_text")
+        
+        # Navigate to old Reddit search
+        print(f"🌐 Navigating to: {search_url}")
+        await navigate_tool.arun({"url": search_url})
         
         # Wait for content to load
         import asyncio
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
         
-        # Extract text content from search results
-        extract_tool = next(tool for tool in tools if tool.name == "extract_text")
+        # Extract initial search results
         content = await extract_tool.arun({})
-        
-        print(f"📄 Extracted search results length: {len(content)} characters")
+        print(f"📄 Initial search results length: {len(content)} characters")
         
         return {
             **state,
@@ -634,75 +821,138 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
         }
     
     async def click_posts_node(state: RedditState) -> RedditState:
-        """Extract content from multiple Reddit posts on the search results page"""
-        print("🖱️ Extracting content from multiple Reddit posts...")
+        """Click into individual Reddit posts to get detailed content"""
+        print("🖱️ Clicking into individual Reddit posts to get detailed content...")
         
         import asyncio
-        get_elements_tool = next(tool for tool in tools if tool.name == "get_elements")
-        extract_tool = next(tool for tool in tools if tool.name == "extract_text")
         
-        # Extract content from the first few posts directly from search results
+        # Get the tools we need
+        try:
+            click_tool = next(tool for tool in tools if tool.name == "click_element")
+            extract_tool = next(tool for tool in tools if tool.name == "extract_text")
+            navigate_tool = next(tool for tool in tools if tool.name == "navigate_browser")
+            current_webpage_tool = next(tool for tool in tools if tool.name == "current_webpage")
+            print("✅ Found all required tools")
+        except StopIteration as e:
+            print(f"❌ Required tool not found: {e}")
+            return {**state, "scraped_content": state.get("scraped_content", ""), "current_step": "extract_pois"}
+        
         detailed_content = []
+        search_url = f"https://old.reddit.com/r/{state['subreddit']}/search/?q={state['search_term']}&restrict_sr=on&sort=relevance&t=all"
         
-        # Get all post containers on the search results page
-        print("🔍 Finding post containers on search results page...")
-        
-        # Try different selectors for post containers
-        container_selectors = [
-            '[data-testid="post-container"]',
-            '[data-testid="post"]',
-            'div[data-testid*="post"]',
-            'article[data-testid*="post"]'
-        ]
-        
-        post_containers = []
-        for selector in container_selectors:
-            try:
-                containers = await get_elements_tool.arun({"selector": selector})
-                if containers:
-                    post_containers = containers
-                    print(f"✅ Found {len(containers)} post containers with selector: {selector}")
-                    break
-            except Exception as e:
-                print(f"❌ Selector {selector} failed: {e}")
-                continue
-        
-        if not post_containers:
-            print("⚠️ No post containers found, trying alternative approach...")
-            # Extract all content and let the LLM parse it
-            all_content = await extract_tool.arun({})
-            detailed_content.append(f"=== SEARCH RESULTS CONTENT ===\n{all_content}\n")
-        else:
-            # Extract content from the first 3 post containers
-            for i in range(min(3, len(post_containers))):
-                try:
-                    print(f"📖 Extracting content from post {i+1}/{min(3, len(post_containers))}")
-                    
-                    # Try to extract content from this specific post container
-                    post_selector = f'{container_selectors[0]}:nth-of-type({i+1})'
-                    
-                    # Get the text content of this post
-                    post_content = await extract_tool.arun({"selector": post_selector})
-                    
-                    if post_content and len(post_content) > 200:
-                        detailed_content.append(f"=== POST {i+1} CONTENT ===\n{post_content}\n")
-                        print(f"✅ Extracted {len(post_content)} characters from post {i+1}")
-                    else:
-                        print(f"⚠️ Post {i+1} had insufficient content")
+        try:
+            # Wait for page to fully load
+            print("⏳ Waiting for page to fully load...")
+            await asyncio.sleep(5)
+            
+            # Get current URL to verify we're on search page
+            current_url = await current_webpage_tool.arun({})
+            print(f"📍 Current URL: {current_url}")
+            
+            # Wait for posts to load
+            print("⏳ Waiting for posts to load...")
+            await asyncio.sleep(3)
+            
+            # Get the page object for direct Playwright access
+            page = None
+            if async_browser.contexts:
+                context = async_browser.contexts[0]
+                if context.pages:
+                    page = context.pages[0]
+            
+            if not page:
+                print("❌ No page available for direct Playwright access")
+                return {**state, "scraped_content": state.get("scraped_content", ""), "current_step": "extract_pois"}
+            
+            # Use the WORKING method: Direct Playwright extraction
+            print("🔍 Using direct Playwright method to extract Reddit post URLs...")
+            post_urls = await extract_reddit_post_urls_from_playwright(page)
+            
+            if post_urls:
+                print(f"✅ Successfully extracted {len(post_urls)} Reddit post URLs using Playwright")
+                # Show first few URLs
+                for i, url in enumerate(post_urls[:5]):
+                    print(f"  {i+1}. {url}")
+            else:
+                print("❌ No URLs found with direct Playwright method")
+                
+                # Fallback: Try extracting from page content
+                print("🔄 Fallback: Extracting from page content...")
+                page_content = await extract_tool.arun({})
+                post_urls = extract_reddit_post_urls_from_text(page_content)
+                print(f"✅ Extracted {len(post_urls)} URLs from page content")
+            
+            # Navigate to individual posts and extract content
+            if post_urls and len(post_urls) > 0:
+                print(f"✅ Using {len(post_urls)} extracted URLs for direct navigation")
+                
+                # Navigate directly to post URLs (try first 3 posts)
+                for i, post_url in enumerate(post_urls[:3]):
+                    try:
+                        print(f"🌐 Navigating to post {i+1}: {post_url[:60]}...")
                         
-                except Exception as e:
-                    print(f"❌ Error extracting post {i+1}: {e}")
-                    continue
+                        # Navigate to the post
+                        await navigate_tool.arun({"url": post_url})
+                        await asyncio.sleep(4)
+                        
+                        # Check if we successfully navigated
+                        new_url = await current_webpage_tool.arun({})
+                        print(f"  📍 Actually navigated to: {new_url}")
+                        
+                        if "/comments/" in new_url:
+                            print(f"  ✅ Successfully navigated to post page!")
+                            
+                            # Extract the full post content
+                            print(f"  📄 Extracting content from post {i+1}...")
+                            post_content = await extract_tool.arun({})
+                            
+                            if post_content and len(post_content) > 500:
+                                # Validate it's a Reddit post
+                                reddit_keywords = ['comments', 'upvote', 'downvote', 'share', 'award', 'reply', 'r/', 'u/', 'points', 'submitted']
+                                if any(keyword in post_content.lower() for keyword in reddit_keywords):
+                                    detailed_content.append(f"=== POST {i+1} CONTENT ===\n{post_content[:4000]}\n")
+                                    print(f"  ✅ Extracted {len(post_content)} characters from post {i+1}")
+                                else:
+                                    print(f"  ⚠️ Post {i+1} content doesn't look like Reddit")
+                            else:
+                                print(f"  ⚠️ Post {i+1} had insufficient content")
+                        else:
+                            print(f"  ❌ Failed to navigate to post page")
+                        
+                        # Go back to search results for next iteration
+                        print(f"  🔙 Going back to search results...")
+                        await navigate_tool.arun({"url": search_url})
+                        await asyncio.sleep(3)
+                        
+                    except Exception as e:
+                        print(f"❌ Error navigating to post {i+1}: {e}")
+                        # Try to go back to search results if we get stuck
+                        try:
+                            await navigate_tool.arun({"url": search_url})
+                            await asyncio.sleep(3)
+                        except:
+                            pass
+                        continue
+            else:
+                print("❌ No post URLs found - will use search results content only")
+                
+        except Exception as e:
+            print(f"❌ Major error in click_posts_node: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # If we didn't get enough content from individual posts, extract all content
-        if len(detailed_content) < 2:
-            print("🔄 Extracting all content from search results page...")
-            all_content = await extract_tool.arun({})
-            detailed_content.append(f"=== ALL SEARCH RESULTS ===\n{all_content}\n")
-        
-        # Combine all content
-        all_content = state.get("scraped_content", "") + "\n\n" + "\n".join(detailed_content)
-        print(f"📄 Total detailed content length: {len(all_content)} characters")
+        # Combine all extracted content
+        if detailed_content:
+            all_content = state.get("scraped_content", "") + "\n\n=== DETAILED POST CONTENT ===\n" + "\n".join(detailed_content)
+            print(f"✅ Total content extracted: {len(all_content)} characters from {len(detailed_content)} posts")
+        else:
+            print("❌ No detailed content extracted from posts")
+            all_content = state.get("scraped_content", "")
+            
+            # If we still have no detailed content, at least return what we have
+            if not all_content:
+                print("⚠️ No content at all - using fallback")
+                all_content = f"Search results from r/{state['subreddit']} for {state['search_term']}"
         
         return {
             **state,
@@ -764,6 +1014,78 @@ Return 8-12 of the most specific places mentioned with detailed context."""),
         return {
             **state,
             "extracted_pois": pois,
+            "current_step": "create_descriptions"
+        }
+
+    async def create_descriptions_node(state: RedditState) -> RedditState:
+        """Create authentic descriptions by quoting Reddit users"""
+        print("✍️ Creating authentic descriptions by quoting Reddit users...")
+        
+        pois = state.get("extracted_pois", [])
+        if not pois:
+            print("❌ No POIs to create descriptions for")
+            return {**state, "extracted_pois": [], "current_step": "end"}
+        
+        # Create a new POI model for enhanced descriptions
+        class EnhancedPOI(BaseModel):
+            name: str = Field(description="Name of the point of interest")
+            description: str = Field(description="Brief category description")
+            category: str = Field(description="Type of place")
+            reddit_context: str = Field(description="Original Reddit content")
+            user_quote: str = Field(description="A short, authentic quote from Reddit users about this place (max 100 words)")
+        
+        class EnhancedPOIList(BaseModel):
+            city: str = Field(description="The city being analyzed")
+            pois: List[EnhancedPOI] = Field(description="List of enhanced POIs with user quotes")
+        
+        llm_with_enhanced_output = llm.with_structured_output(EnhancedPOIList)
+        
+        # Create enhanced descriptions with user quotes
+        description_messages = [
+            SystemMessage(content=f"""You are an expert at creating authentic, engaging descriptions for places in {state['city']} by quoting what Reddit users actually said.
+
+For each place, create a short, authentic description (max 100 words) that:
+1. ALWAYS starts with Reddit-specific phrases like "Reddit users love...", "According to r/{state['subreddit']}...", "Locals say...", "The community recommends..."
+2. Quotes directly from what Reddit users said about the place
+3. Captures the authentic voice and enthusiasm of Reddit users
+4. Highlights what makes the place special according to locals
+5. Uses actual phrases and recommendations from the Reddit content
+6. Maintains the casual, honest tone of Reddit recommendations
+7. Includes Reddit-specific terms like "upvoted", "recommended", "community favorite", "hidden gem"
+
+Focus on:
+- What users specifically recommend doing there
+- What makes it unique or special
+- Why locals love it
+- Any insider tips or hidden gems mentioned
+- Reddit community consensus and upvotes
+
+Make the descriptions feel like they're coming directly from Reddit users who've been there and include Reddit community language."""),
+            HumanMessage(content=f"""Create authentic user quotes for these places in {state['city']} based on the Reddit content:
+
+{chr(10).join([f"• {poi.name} ({poi.category}): {poi.reddit_context[:300]}..." for poi in pois])}
+
+Create short, authentic quotes (max 100 words each) that capture what Reddit users actually said about each place.""")
+        ]
+        
+        enhanced_response = await llm_with_enhanced_output.ainvoke(description_messages)
+        enhanced_pois = enhanced_response.pois
+        
+        print(f"✅ Created authentic descriptions for {len(enhanced_pois)} POIs")
+        
+        # Convert back to original POI format but with enhanced descriptions
+        final_pois = []
+        for enhanced_poi in enhanced_pois:
+            # Find the original POI to preserve other fields
+            original_poi = next((p for p in pois if p.name == enhanced_poi.name), None)
+            if original_poi:
+                # Update the description with the user quote
+                original_poi.description = enhanced_poi.user_quote
+                final_pois.append(original_poi)
+        
+        return {
+            **state,
+            "extracted_pois": final_pois,
             "current_step": "end"
         }
     
@@ -772,13 +1094,15 @@ Return 8-12 of the most specific places mentioned with detailed context."""),
     
     # Add nodes
     workflow.add_node("scrape_reddit", scrape_reddit_node)
-    workflow.add_node("click_posts", click_posts_node) # Add the new node
+    workflow.add_node("click_posts", click_posts_node)
     workflow.add_node("extract_pois", extract_pois_node)
+    workflow.add_node("create_descriptions", create_descriptions_node)
     
     # Add edges
-    workflow.add_edge("scrape_reddit", "click_posts") # Add the new edge
+    workflow.add_edge("scrape_reddit", "click_posts")
     workflow.add_edge("click_posts", "extract_pois")
-    workflow.add_edge("extract_pois", END)
+    workflow.add_edge("extract_pois", "create_descriptions")
+    workflow.add_edge("create_descriptions", END)
     
     # Add START edge
     workflow.set_entry_point("scrape_reddit")
@@ -833,7 +1157,7 @@ Return 8-12 of the most specific places mentioned with detailed context."""),
                 "name": poi.name,
                 "lat": lat + lat_variation,
                 "lng": lng + lng_variation,
-                "summary": f"Reddit users recommend: {poi.reddit_context[:300]}...",  # More context
+                "summary": poi.description,  # Use the enhanced user quote description
                 "type": "reddit",
                 "radius": 20
             }
