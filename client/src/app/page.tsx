@@ -83,8 +83,8 @@ export default function HomePage() {
   const map = useRef<mapboxgl.Map | null>(null);
 
   // Your exact location coordinates
-  const TORONTO_LAT = 43.844107;
-  const TORONTO_LNG = -79.106474;
+  const TORONTO_LAT = 43.6548;
+  const TORONTO_LNG = -79.3883;
   const RADIUS_KM = 8; // Adjust this value to change boundary size
 
   useEffect(() => {

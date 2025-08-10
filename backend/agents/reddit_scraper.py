@@ -25,6 +25,7 @@ class POI(BaseModel):
     name: str = Field(description="Name of the point of interest")
     description: str = Field(description="Brief description of what makes this place special")
     category: str = Field(description="Category like 'museum', 'park', 'restaurant', 'attraction'")
+    reddit_context: str = Field(description="Original Reddit content mentioning this place for authentic summary generation")
 
 class POIList(BaseModel):
     city: str = Field(description="The city being analyzed")
@@ -213,6 +214,18 @@ Use the extract_text tool to get everything you can see. If the page is empty or
                 "messages": [HumanMessage(content="No content found to extract POIs from")]
             }
         
+        # Debug: Show what content we're working with
+        print(f"📄 Processing {len(scraped_content)} characters of Reddit content")
+        print(f"🔍 Content preview: {scraped_content[:500]}...")
+        
+        # Check if content looks like real Reddit posts
+        reddit_indicators = ['reddit.com', 'r/', 'upvote', 'downvote', 'comment', 'post', 'OP', 'edit:', 'deleted']
+        has_reddit_content = any(indicator in scraped_content.lower() for indicator in reddit_indicators)
+        if has_reddit_content:
+            print("✅ Content contains Reddit-specific elements - authentic content detected!")
+        else:
+            print("⚠️ Content doesn't seem to be from Reddit - might be cached/static data")
+        
         # Always prioritize a mix of popular and underground spots
         focus_instruction = f"""
 PRIORITY: Mix of popular attractions and underground/hidden spots.
@@ -249,14 +262,15 @@ DO NOT extract:
 
 For each place, provide:
 - name: The exact name of the place
-- description: ACTUAL USER QUOTES from Reddit about this place. Include what real users said, like "amazing food", "best view in the city", "hidden gem", etc. Use their exact words when possible.
+- description: Brief category description (e.g., "Popular restaurant", "Hidden gem cafe")
 - category: The type of place (restaurant, museum, park, attraction, etc.)
+- reddit_context: The EXACT Reddit content (posts/comments) that mention this place. Include the full context of what users said about it, with quotes and opinions. This will be used to generate authentic summaries.
 
-IMPORTANT: For the description, extract real user opinions and quotes from the Reddit content, not generic descriptions.
+IMPORTANT: For reddit_context, copy the actual Reddit text that mentions this place, including user quotes, opinions, and recommendations. This should be the raw Reddit content, not a summary.
 
 Return 5-8 of the most specific places mentioned."""
         
-        user_message = f"""Extract specific places from this Reddit content about {city}:\n\n{scraped_content[:3000]}"""
+        user_message = f"""Extract specific places from this Reddit content about {city}:\n\n{scraped_content[:6000]}"""
         
         messages = [
             SystemMessage(content=system_message),
@@ -370,23 +384,35 @@ Return 5-8 of the most specific places mentioned."""
                 if coords:
 
                     
-                    # Create summary that incorporates actual user quotes
-                    system_message = f"""Create a concise summary using real Reddit user quotes about {poi.name}.
+                    # Create summary using the original Reddit content
+                    system_message = f"""Create an authentic, engaging summary for {poi.name} using the actual Reddit content provided.
 
-Use the actual user quotes provided. Format as a single flowing sentence like:
-"Reddit users say [quote] and describe it as [user words]" 
-OR
-"According to r/{subreddit}, locals rave about [specific user mentions]"
+IMPORTANT RULES:
+1. Use ONLY the Reddit content provided - don't make up anything
+2. Include actual user quotes and opinions from the Reddit posts
+3. Make it sound natural and conversational, like a local giving you insider tips
+4. Keep it under 300 characters
+5. Start with something like "Reddit users love..." or "According to r/{subreddit}..." or "Locals say..."
+6. Include specific details mentioned by users (food quality, atmosphere, prices, etc.)
+7. If users mention it's a "hidden gem" or "underrated", include that
+8. Make it feel like real insider knowledge from the community
 
-Keep it under 300 characters, make it flow naturally, and use the users' exact words. NO bullet points or lists."""
+Format examples:
+- "Reddit users love the [specific dish] here and say it's a hidden gem for [reason]"
+- "According to r/{subreddit}, this place has [specific feature] and locals rave about [specific aspect]"
+- "Locals say this is the best [category] in the area, especially for [specific reason]"
+
+DO NOT use generic phrases like "great food" or "nice atmosphere" unless users actually said those words."""
                     
-                    user_message = f"""Location: {poi.name}
+                    user_message = f"""Place: {poi.name}
 Category: {poi.category}
-Real User Quotes/Opinions: {poi.description}
-City: {city}
 Subreddit: r/{subreddit}
+City: {city}
 
-Create a summary that showcases what real Reddit users actually said about this place. Use their quotes and opinions."""
+ORIGINAL REDDIT CONTENT ABOUT THIS PLACE:
+{poi.reddit_context}
+
+Create an authentic summary using the actual Reddit content above. Use real user quotes and opinions."""
                     
                     try:
                         summary_messages = [
@@ -397,7 +423,31 @@ Create a summary that showcases what real Reddit users actually said about this 
                         summary_response = llm.invoke(summary_messages)
                         summary = summary_response.content.strip()[:400]  # Increased length limit
                         
-
+                        # Validate that the summary actually uses Reddit content
+                        if not any(keyword in summary.lower() for keyword in ['reddit', 'r/', 'users', 'locals', 'community']):
+                            # Fallback to a more direct approach
+                            fallback_summary = f"Reddit users in r/{subreddit} recommend this {poi.category.lower()}. {poi.reddit_context[:200]}..."
+                            summary = fallback_summary[:400]
+                        
+                        # Additional validation: if summary is too generic, try to make it more authentic
+                        generic_phrases = ['great', 'good', 'nice', 'popular', 'famous', 'well-known']
+                        if any(phrase in summary.lower() for phrase in generic_phrases) and len(poi.reddit_context) > 50:
+                            # Try to extract a more specific quote from the Reddit content
+                            import re
+                            # Look for quotes or specific opinions in the Reddit content
+                            quotes = re.findall(r'"([^"]+)"', poi.reddit_context)
+                            if quotes:
+                                specific_quote = quotes[0][:100]  # Take first quote, limit length
+                                summary = f"Reddit users say: \"{specific_quote}\" about this {poi.category.lower()}"
+                            else:
+                                # Look for specific adjectives or opinions
+                                opinion_words = ['amazing', 'incredible', 'best', 'favorite', 'love', 'hidden gem', 'underrated', 'must-try']
+                                for word in opinion_words:
+                                    if word in poi.reddit_context.lower():
+                                        summary = f"Reddit users call this place {word} - {poi.reddit_context[:150]}..."
+                                        break
+                        
+                        print(f"📝 Generated summary for {poi.name}: {summary[:100]}...")
                         
                         # Create POI
                         poi_output = POIOutput(
@@ -414,13 +464,13 @@ Create a summary that showcases what real Reddit users actually said about this 
                         
                     except Exception as e:
                         print(f"Error creating POI summary for {poi.name}: {e}")
-                        # Fallback summary using the original user description
-                        user_description = poi.description[:250] if poi.description else f"Popular {poi.category} mentioned by r/{subreddit} users"
+                        # Fallback summary using the original Reddit context
+                        reddit_context = poi.reddit_context[:250] if poi.reddit_context else f"Popular {poi.category.lower()} mentioned by r/{subreddit} users"
                         poi_output = POIOutput(
                             name=poi.name,
                             lat=coords['lat'],
                             lng=coords['lng'],
-                            summary=f"Reddit users say: {user_description}",
+                            summary=f"Reddit users say: {reddit_context}",
                             type="reddit", 
                             radius=20
                         )
@@ -512,7 +562,7 @@ Create a summary that showcases what real Reddit users actually said about this 
 # Usage example
 def main():
     # Create workflow
-    workflow = create_reddit_scraper_agent("askTO")
+    workflow = create_reddit_scraper_agent("Toronto")
     
     # Initial state
     initial_state = {

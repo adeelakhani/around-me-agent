@@ -1,7 +1,8 @@
 # backend/routes/locations.py
 from fastapi import APIRouter, Query
-from agents.reddit_scraper import create_reddit_scraper_agent
-from utils.location import get_user_location, get_location_name, get_location_details
+from reddit.service import get_reddit_pois
+from agents.news_scraper import get_news_for_city
+from utils.location import get_user_location, get_location_details
 import asyncio
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -24,97 +25,21 @@ async def get_locations(
     province = location_details["province"]
     country = location_details["country"]
     
-    print(f"Starting LangGraph agent for coordinates: {user_lat}, {user_lon} in {city}, {province}, {country}")
-    
-    # Create different coordinates and subreddits for variety
-    import random
-    import time
-    
-    # Add some randomness to get different results each time
-    timestamp = int(time.time())
-    random.seed(timestamp)
-    
-    # Simple rule: r/{city}
-    subreddit = city.lower()
-    print(f"=== USING SUBREDDIT ===")
-    print(f"City: {city}")
-    print(f"Subreddit: r/{subreddit}")
-    print(f"Timestamp: {timestamp}")
-    print("=" * 50)
-    
-    # Use just one location for faster results
-    location_configs = [
-        {"coords": (user_lat, user_lon), "subreddit": subreddit, "area": "Downtown"},
-    ]
-    
-    # Create location objects with different Reddit data
     all_pois = []
     
-    for i, config in enumerate(location_configs):
-        poi_lat, poi_lon = config["coords"]
-        subreddit = config["subreddit"]
-        area = config["area"]
-        
-        # Create LangGraph agent for each location
-        agent = create_reddit_scraper_agent(subreddit, city)
-        
-        # Create location data with specific coordinates
-        location_data = {
-            "name": f"{area} {city}",
-            "type": "reddit",
-            "lat": poi_lat,
-            "lng": poi_lon,
-            "subreddit": subreddit,
-            "city": city,
-            "province": province, 
-            "country": country,
-            "data": {}
-        }
-        
-        # Run LangGraph agent to scrape and create one POI
-        initial_state = {
-            "messages": [],
-            "location_data": location_data,
-            "reddit_data": [],
-            "current_step": "scrape_reddit",
-            "pois": [],
-            "subreddit": subreddit,
-            "city": city,
-            "scraped_content": None,
-            "extracted_pois": []
-        }
-        
-        print(f"Invoking LangGraph agent for POI {i+1} at coordinates {poi_lat}, {poi_lon}...")
-        try:
-            # Call the compiled workflow
-            result = agent.invoke(initial_state, config={"recursion_limit": 50})
-            print(f"LangGraph result keys: {list(result.keys())}")
-            print(f"LangGraph messages count: {len(result.get('messages', []))}")
-            
-            # Get POI from the result
-            pois = result.get("pois", [])
-            print(f"Found {len(pois)} POIs for location {i+1}")
-            
-            if pois:
-                print(f"=== FOUND {len(pois)} POIs FOR LOCATION {i+1} ===")
-                # Add ALL POIs found, not just the first one
-                for j, poi in enumerate(pois):
-                    print(f"POI {i+1}.{j+1}: {poi['name']} at {poi['lat']}, {poi['lng']}")
-                    print(f"Summary: {poi['summary'][:100]}...")
-                    print(f"Subreddit: {subreddit}")
-                    print(f"Area: {area}")
-                    print("-" * 30)
-                    all_pois.append(poi)
-            else:
-                print(f"No POI found for location {i+1}, skipping")
-                continue
-            
-        except Exception as e:
-            print(f"LangGraph error for POI {i+1}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+    # Get Reddit POIs
+    reddit_pois = get_reddit_pois(city, province, country, user_lat, user_lon)
+    all_pois.extend(reddit_pois)
     
-    print(f"Returning {len(all_pois)} unique POIs")
+    # Also get news POIs for the same location
+    print(f"🗞️ Fetching news for {city}, {province}, {country}")
+    try:
+        news_pois = get_news_for_city(city, province, country, user_lat, user_lon)
+        print(f"✅ Found {len(news_pois)} news POIs")
+        all_pois.extend(news_pois)  # Add news POIs to the list
+    except Exception as e:
+        print(f"❌ Error fetching news: {e}")
+    
+    print(f"Returning {len(all_pois)} total POIs (Reddit + News)")
     return all_pois
 
