@@ -1,1 +1,1 @@
-# Reddit module
+# Reddit package for AroundMe agent

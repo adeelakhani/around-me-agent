@@ -33,7 +33,10 @@ async def debug_poi_extraction():
         extract_tool = next(tool for tool in tools if tool.name == "extract_text")
         
         # Test URL - generic search for any city
-        test_url = "https://old.reddit.com/r/toronto/search/?q=hidden%20gems&restrict_sr=on&sort=relevance&t=all"
+        city = "Vancouver"  # Change this to test different cities
+        subreddit = city.lower()
+        test_url = f"https://old.reddit.com/r/{subreddit}/search/?q=hidden%20gems&restrict_sr=on&sort=relevance&t=all"
+        print(f"🌐 Testing with city: {city}")
         print(f"🌐 Navigating to: {test_url}")
         
         # Navigate to Reddit search

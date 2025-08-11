@@ -7,40 +7,22 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from langchain_community.tools.playwright.utils import create_async_playwright_browser
 from langgraph.prebuilt import ToolNode
-from pydantic import BaseModel, Field
-import requests
-import json
-import re
-import time
 import nest_asyncio
-from collections import Counter
 import os
 import random
-from utils.location import is_coordinates_in_city
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
+
+# Import from organized modules
+from reddit.models import POI, POIList, POIOutput, Coordinates, EnhancedPOI, EnhancedPOIList
+from reddit.geocoding import search_serper, geocode_with_fallback
+from reddit.url_extraction import extract_reddit_post_urls_from_playwright
+from reddit.search_terms import get_random_search_term
+from utils.location import is_coordinates_in_city
 
 load_dotenv(override=True)
 nest_asyncio.apply()
 
-# Define structured output for POI data
-class POI(BaseModel):
-    name: str = Field(description="Name of the point of interest")
-    description: str = Field(description="Brief description of what makes this place special")
-    category: str = Field(description="Category like 'museum', 'park', 'restaurant', 'attraction'")
-    reddit_context: str = Field(description="Original Reddit content mentioning this place for authentic summary generation")
-
-class POIList(BaseModel):
-    city: str = Field(description="The city being analyzed")
-    pois: List[POI] = Field(description="List of points of interest found")
-
-class POIOutput(BaseModel):
-    name: str = Field(description="Name of the point of interest")
-    lat: float = Field(description="Latitude coordinate")
-    lng: float = Field(description="Longitude coordinate")
-    summary: str = Field(description="Summary of what's happening at this location")
-    type: str = Field(description="Type of POI (reddit, event, restaurant, etc.)")
-    radius: int = Field(description="Radius in kilometers")
+# Models are now imported from reddit.models
 
 # Define the State - DYNAMIC REDDIT PIPELINE
 class State(TypedDict):
@@ -54,177 +36,7 @@ class State(TypedDict):
     extracted_pois: Optional[List[POI]]
     city: Optional[str]
 
-def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
-    """Extract Reddit post URLs from plain text content using regex patterns"""
-    try:
-        post_urls = []
-        
-        # Look for Reddit post patterns in plain text
-        # These patterns match the format of Reddit post URLs that might appear in text
-        url_patterns = [
-            # Full URLs
-            r'https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            r'https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            r'https://www\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            # Relative URLs
-            r'/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            # Post IDs (common in Reddit text)
-            r'comments/([\w]+)/[\w\-\_]+',
-        ]
-        
-        for pattern in url_patterns:
-            matches = re.findall(pattern, text_content)
-            for match in matches:
-                if isinstance(match, tuple):
-                    # If it's a tuple (from group capture), take the first element
-                    match = match[0] if match else ""
-                
-                if match:
-                    # Normalize URL
-                    if match.startswith('/r/'):
-                        full_url = f"https://old.reddit.com{match}"
-                    elif match.startswith('http'):
-                        full_url = match
-                    elif 'comments/' in match:
-                        # This is a post ID, construct the URL - use dynamic subreddit
-                        # We'll need to get the subreddit from context or use a generic approach
-                        full_url = f"https://old.reddit.com/r/askTO/comments/{match}"
-                    else:
-                        full_url = f"https://old.reddit.com{match}"
-                    
-                    # Clean up the URL
-                    full_url = full_url.split('?')[0]  # Remove query parameters
-                    full_url = full_url.rstrip('/')  # Remove trailing slash
-                    
-                    if full_url not in post_urls and '/comments/' in full_url:
-                        post_urls.append(full_url)
-        
-        return list(set(post_urls))  # Remove duplicates
-        
-    except Exception as e:
-        print(f"Error extracting Reddit URLs from text: {e}")
-        return []
-
-async def extract_reddit_post_urls_from_playwright(page) -> List[str]:
-    """Extract Reddit post URLs using direct Playwright methods (WORKING METHOD)"""
-    try:
-        post_urls = []
-        
-        # Use Playwright's direct methods to get all links with href containing '/comments/'
-        comment_links = await page.query_selector_all("a[href*='/comments/']")
-        
-        for link in comment_links:
-            try:
-                href = await link.get_attribute('href')
-                if href and 'reddit.com' in href:
-                    # Normalize URL
-                    if href.startswith('/'):
-                        full_url = f"https://old.reddit.com{href}"
-                    elif href.startswith('http'):
-                        full_url = href
-                    else:
-                        full_url = f"https://old.reddit.com{href}"
-                    
-                    # Clean up the URL
-                    full_url = full_url.split('?')[0].rstrip('/')
-                    
-                    if full_url not in post_urls:
-                        post_urls.append(full_url)
-            except Exception as e:
-                continue
-        
-        return list(set(post_urls))  # Remove duplicates
-        
-    except Exception as e:
-        print(f"Error extracting URLs with Playwright: {e}")
-        return []
-
-def extract_reddit_post_urls_from_elements(elements: List[Dict]) -> List[str]:
-    """Extract Reddit post URLs from Playwright elements"""
-    try:
-        post_urls = []
-        
-        for element in elements:
-            if isinstance(element, dict):
-                # Check for href attribute
-                href = element.get('href', '')
-                if '/comments/' in href:
-                    # Normalize URL
-                    if href.startswith('/'):
-                        full_url = f"https://old.reddit.com{href}"
-                    elif href.startswith('http'):
-                        full_url = href
-                    else:
-                        full_url = f"https://old.reddit.com{href}"
-                    
-                    # Clean up the URL
-                    full_url = full_url.split('?')[0].rstrip('/')
-                    
-                    if full_url not in post_urls:
-                        post_urls.append(full_url)
-        
-        return list(set(post_urls))
-        
-    except Exception as e:
-        print(f"Error extracting URLs from elements: {e}")
-        return []
-
-def extract_reddit_post_urls(html_content: str) -> List[str]:
-    """Extract Reddit post URLs from HTML content using BeautifulSoup"""
-    try:
-        soup = BeautifulSoup(html_content, 'html.parser')
-        post_urls = []
-        
-        # Look for links that contain /comments/ pattern
-        links = soup.find_all('a', href=True)
-        
-        for link in links:
-            href = link.get('href', '')
-            if '/comments/' in href and 'reddit.com' in href:
-                # Normalize URL
-                if href.startswith('/'):
-                    full_url = f"https://old.reddit.com{href}"
-                elif href.startswith('http'):
-                    full_url = href
-                else:
-                    full_url = f"https://old.reddit.com{href}"
-                
-                # Clean up the URL
-                full_url = full_url.split('?')[0]  # Remove query parameters
-                full_url = full_url.rstrip('/')  # Remove trailing slash
-                
-                if full_url not in post_urls:
-                    post_urls.append(full_url)
-        
-        # Also try regex patterns as backup
-        url_patterns = [
-            r'https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            r'https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            r'/r/\w+/comments/[\w]+/[\w\-\_]+/?',
-            r'href="(/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
-            r'href="(https://old\.reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
-            r'href="(https://reddit\.com/r/\w+/comments/[\w]+/[\w\-\_]+/?)"',
-        ]
-        
-        for pattern in url_patterns:
-            matches = re.findall(pattern, html_content)
-            for match in matches:
-                if match.startswith('/r/'):
-                    full_url = f"https://old.reddit.com{match}"
-                elif match.startswith('http'):
-                    full_url = match
-                else:
-                    full_url = f"https://old.reddit.com{match}"
-                
-                full_url = full_url.split('?')[0].rstrip('/')
-                if full_url not in post_urls:
-                    post_urls.append(full_url)
-        
-        return list(set(post_urls))  # Remove duplicates
-        
-    except Exception as e:
-        print(f"Error extracting Reddit URLs: {e}")
-        return []
+# URL extraction functions are now imported from reddit.url_extraction
 
 def create_reddit_scraper_agent(subreddit=None, city=None):
     # Dynamically determine subreddit based on city if not provided
@@ -236,6 +48,8 @@ def create_reddit_scraper_agent(subreddit=None, city=None):
         city = "Toronto"  # Default fallback
     
     print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
+    print(f"🔍 Target subreddit: r/{subreddit}")
+    print(f"🌍 Target city: {city}")
     
     # Initialize tools and LLM
     from langchain_community.tools.playwright.utils import create_async_playwright_browser
@@ -250,32 +64,12 @@ def create_reddit_scraper_agent(subreddit=None, city=None):
     llm_with_poi_output = llm.with_structured_output(POIOutput)
     
     # Serper.dev search function
-    def search_serper(query: str) -> dict:
-        """Search using Serper.dev API"""
-        serper_key = os.getenv("SERPER_API_KEY")
-        if not serper_key:
-            print("⚠️ SERPER_API_KEY not found, using fallback coordinates")
-            return {"organic": [], "knowledgeGraph": None}
-            
-        try:
-            url = "https://google.serper.dev/search"
-            headers = {
-                "X-API-KEY": serper_key,
-                "Content-Type": "application/json"
-            }
-            payload = {"q": query}
-            
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"Serper search error: {e}")
-            return {"organic": [], "knowledgeGraph": None}
+    # Geocoding functions are now imported from reddit.geocoding
     
     def scrape_reddit_node(state: State) -> Dict[str, Any]:
         """Node to scrape Reddit content using browser tools"""
         try:
-            subreddit = state.get("subreddit", "askTO")
+            subreddit = state.get("subreddit", city.lower())
             city = state.get('city', 'Unknown City')
             
             system_message = f"""You are a Reddit scraping expert. Your job is to search for posts about things to do and places to visit.
@@ -291,35 +85,10 @@ CRITICAL INSTRUCTIONS:
 You MUST use BOTH browser tools in sequence: first navigate_browser, then extract_text.
 Do not respond without using both tools."""
             
-            # Always include underground spots in the mix
-            print("🔍 Including underground/hidden spots in search")
+            # Get search term from organized module
+            search_term = get_random_search_term(city)
             
-            # Generic search terms for finding places
-            search_terms = [
-                "things%20to%20do",
-                "best%20places",
-                "cool%20spots",
-                "attractions",
-                "activities",
-                "hidden%20gems",
-                "underrated",
-                "secret%20spots",
-                "local%20favorites",
-                "off%20the%20beaten%20path",
-                "unknown%20places",
-                "lowkey%20spots",
-                "insider%20tips",
-                "not%20touristy",
-                "local%20secrets",
-                "underground",
-                "hidden%20spots"
-            ]
-            
-            # Pick a random search term for variety
-            import random
-            search_term = random.choice(search_terms)
-            
-            user_message = f"""Navigate to https://www.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all
+            user_message = f"""Navigate to https://old.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all
 
 Then extract ALL text content from the page, including:
 - Post titles and content
@@ -339,7 +108,7 @@ IMPORTANT: You must call extract_text after navigating to get the page content."
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"🕐 [{current_time}] Scraping r/{subreddit} for places...")
             print(f"🔍 Using search term: {search_term}")
-            print(f"🌐 Navigating to: https://www.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all")
+            print(f"🌐 Navigating to: https://old.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all")
             
             response = llm_with_tools.invoke(messages)
             
@@ -420,41 +189,56 @@ IMPORTANT: You must call extract_text after navigating to get the page content."
         
 
         
-        system_message = f"""You are analyzing Reddit content to find COOL PLACES in {state['city']}.
+        system_message = f"""You are analyzing Reddit content to find COOL PLACES that people recommend visiting.
 
-GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting in {state['city']}.
+GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting.
 
-CRITICAL RULES:
-1. Extract EVERY place name mentioned in the Reddit content that people recommend or talk about positively
-2. Focus on places that Reddit users say are cool, fun, interesting, or worth visiting
-3. Look for places that people recommend to others
-4. Include both specific business names AND general area names that people mention positively
-5. Look for places in post titles, comments, and any other text
+IMPORTANT: Extract ALL places that are mentioned positively in the provided Reddit content, especially places that people recommend or say are cool/fun.
+Be thorough and comprehensive - look for any place names, businesses, attractions, neighborhoods, etc. that people talk about positively.
 
-EXTRACT ALL COOL PLACES mentioned in the content, including:
-- Any business names that people recommend
-- Any venue names that people say are fun
-- Any location names that people mention positively
-- Any area names that people recommend visiting
-- Any building names that people say are interesting
-- Any street names that seem like important destinations
-- Any landmark names that people recommend
-- Any other place names that people talk about positively
+Extract ALL COOL PLACES mentioned in the content, including:
+- Restaurants, cafes, bars, food spots that people recommend
+- Museums, galleries, cultural venues that people say are interesting
+- Parks, trails, outdoor spaces that people recommend
+- Shopping centers, markets, boutiques that people mention positively
+- Entertainment venues, theaters, cinemas that people recommend
+- Tourist attractions, landmarks that people say are worth visiting
+- Local businesses and services that people recommend
+- Neighborhoods, districts, areas that people mention positively
+- Any specific place names with locations that people talk about positively
 
-DO NOT extract:
-- Generic terms like "the mall" or "a park" (unless they're part of a specific name)
-- Vague references like "that place" or "the spot"
-- Places that people mention negatively
+For each place, provide:
+1. The exact name as mentioned
+2. A brief description based on what's said about it
+3. The category
+4. The specific Reddit context where it's mentioned
 
-For each place found, provide:
-- name: The exact name as mentioned in Reddit
-- description: Brief category (e.g., "Restaurant", "Park", "Museum", "Neighborhood")
-- category: Type of place
-- reddit_context: The exact Reddit text that mentions this place
-
-Be extremely thorough - extract as many cool places as you can find mentioned in the content."""
+Be comprehensive - extract as many cool places as you can find mentioned in the content."""
         
-        user_message = f"""Find ALL COOL PLACES in {city} that Reddit users recommend visiting:\n\n{scraped_content[:12000]}"""
+        user_message = f"""Find ALL COOL PLACES that people recommend visiting.
+
+Here is the Reddit content to analyze:
+
+{scraped_content[:12000]}
+
+Extract ALL COOL PLACES mentioned in this content, including:
+- Restaurants, cafes, bars, food spots that people recommend
+- Museums, galleries, cultural venues that people say are interesting
+- Parks, trails, outdoor spaces that people recommend
+- Shopping centers, markets, boutiques that people mention positively
+- Entertainment venues, theaters, cinemas that people recommend
+- Tourist attractions, landmarks that people say are worth visiting
+- Local businesses and services that people recommend
+- Neighborhoods, districts, areas that people mention positively
+- Any specific place names with locations that people talk about positively
+
+For each place, provide:
+1. The exact name as mentioned
+2. A brief description based on what's said about it
+3. The category
+4. The specific Reddit context where it's mentioned
+
+Be comprehensive - extract as many cool places as you can find mentioned in the content."""
         
         messages = [
             SystemMessage(content=system_message),
@@ -496,69 +280,106 @@ Be extremely thorough - extract as many cool places as you can find mentioned in
             
             final_pois = []
             
+            print(f"🗺️ Processing {len(pois)} POIs for geocoding...")
+            
             for poi in pois:
-                print(f"Getting coordinates for: {poi.name}")
+                print(f"📍 Getting coordinates for: {poi.name}")
                 
                 try:
-                    # Search using Serper.dev - more specific search
-                    # Get country from location_data or default to Canada
-                    country = location_data.get('country', 'Canada')
-                    province = location_data.get('province', 'Ontario')
-                    search_query = f"{poi.name} {city} {province} {country} exact location coordinates"
-                    print(f"🔍 Searching: {search_query}")
+                    # Try geocoding with fallback methods
+                    print(f"🗺️ Geocoding {poi.name}...")
+                    coords = geocode_with_fallback(poi.name, city, province, country)
                     
-                    search_results = search_serper(search_query)
-                    
-                    # Extract text from search results
-                    search_text = ""
-                    if search_results.get("organic"):
-                        for result in search_results["organic"][:3]:  # Top 3 results
-                            search_text += f"Title: {result.get('title', '')}\n"
-                            search_text += f"Snippet: {result.get('snippet', '')}\n\n"
-                    
-                    if search_results.get("knowledgeGraph"):
-                        kg = search_results["knowledgeGraph"]
-                        search_text += f"Knowledge Graph: {kg.get('title', '')}\n"
-                        search_text += f"Description: {kg.get('description', '')}\n"
-                        if kg.get("attributes"):
-                            search_text += f"Attributes: {kg.get('attributes')}\n"
-                    
-                    print(f"📝 Search results: {search_text[:200]}...")
-                    
-                    # Use LLM to extract coordinates from search results
-                    class Coordinates(BaseModel):
-                        lat: float = Field(description="Latitude coordinate")
-                        lng: float = Field(description="Longitude coordinate")
-                    
-                    llm_with_coords = llm.with_structured_output(Coordinates)
-                    
-                    coord_response = llm_with_coords.invoke([
-                        SystemMessage(content="Extract the EXACT latitude and longitude coordinates for the specific place mentioned. Look for coordinate patterns like 43.1234, -79.1234. If the coordinates are for the general city area (like city center) and not the specific place, return 0.0 for both lat and lng. Only return coordinates if they are specifically for the exact location."),
-                        HumanMessage(content=search_text)
-                    ])
-                    
-                    if coord_response.lat != 0.0 and coord_response.lng != 0.0:
-                        # Check if coordinates are within the detected city bounds
-                        if is_coordinates_in_city(coord_response.lat, coord_response.lng, city):
-                            coords = {
-                                'lat': coord_response.lat,
-                                'lng': coord_response.lng,
-                                'address': f"{poi.name}, {city}"
-                            }
-                            print(f"✅ Found coordinates for {poi.name}: ({coords['lat']}, {coords['lng']}) - VALIDATED")
+                    if coords:
+                        coords['address'] = f"{poi.name}, {city}"
+                        print(f"✅ OpenStreetMap geocoding successful for {poi.name}: ({coords['lat']}, {coords['lng']})")
+                    else:
+                        print(f"❌ OpenStreetMap failed for {poi.name}, trying Serper...")
+                        
+                        # Fallback to Serper if OpenStreetMap fails
+                        country = location_data.get('country', 'Canada')
+                        province = location_data.get('province', 'Ontario')
+                        
+                        # More specific search queries for better geocoding
+                        search_queries = [
+                            f'"{poi.name}" "{city}" address location coordinates',
+                            f'"{poi.name}" "{city}" exact address street number',
+                            f'"{poi.name}" "{city}" map location GPS coordinates',
+                            f'"{poi.name}" "{city}" business address phone number'
+                        ]
+                        
+                        search_results = None
+                        search_text = ""
+                        
+                        # Try each search query until we get good results
+                        for i, search_query in enumerate(search_queries):
+                            print(f"🔍 Serper search attempt {i+1}: {search_query}")
+                            search_results = search_serper(search_query)
+                            
+                            # Check if we got meaningful results
+                            if search_results.get("organic") and len(search_results["organic"]) > 0:
+                                print(f"✅ Serper search {i+1} returned {len(search_results['organic'])} results")
+                                break
+                            else:
+                                print(f"⚠️ Serper search {i+1} returned no results, trying next query...")
+                        
+                        if not search_results:
+                            print(f"❌ All Serper search queries failed for {poi.name}")
+                            continue
+                        
+                        # Extract text from search results
+                        search_text = ""
+                        if search_results.get("organic"):
+                            for result in search_results["organic"][:3]:  # Top 3 results
+                                search_text += f"Title: {result.get('title', '')}\n"
+                                search_text += f"Snippet: {result.get('snippet', '')}\n\n"
+                        
+                        if search_results.get("knowledgeGraph"):
+                            kg = search_results["knowledgeGraph"]
+                            search_text += f"Knowledge Graph: {kg.get('title', '')}\n"
+                            search_text += f"Description: {kg.get('description', '')}\n"
+                            if kg.get("attributes"):
+                                search_text += f"Attributes: {kg.get('attributes')}\n"
+                        
+                        print(f"📝 Serper search results: {search_text[:200]}...")
+                        
+                        # Use LLM to extract coordinates from search results
+                        # Coordinates model is now imported from reddit.models
+                        
+                        llm_with_coords = llm.with_structured_output(Coordinates)
+                        
+                        coord_response = llm_with_coords.invoke([
+                            SystemMessage(content="""Extract EXACT latitude and longitude coordinates for the specific place.
+
+LOOK FOR:
+- GPS coordinates like "43.6532, -79.3832" or "43°39'11.5"N 79°22'59.9"W"
+- Address with street number and name
+- "Located at" or "Address:" followed by coordinates
+- Google Maps links with coordinates
+- Business listings with exact addresses
+
+ONLY return coordinates if they are SPECIFICALLY for the exact place mentioned.
+If coordinates are for general city area, return 0.0, 0.0"""),
+                            HumanMessage(content=search_text)
+                        ])
+                        
+                        if coord_response.lat != 0.0 and coord_response.lng != 0.0:
+                            # Check if coordinates are within the detected city bounds
+                            if is_coordinates_in_city(coord_response.lat, coord_response.lng, city):
+                                coords = {
+                                    'lat': coord_response.lat,
+                                    'lng': coord_response.lng,
+                                    'address': f"{poi.name}, {city}"
+                                }
+                                print(f"✅ Serper found coordinates for {poi.name}: ({coords['lat']}, {coords['lng']}) - VALIDATED")
+                            else:
+                                print(f"❌ Serper coordinates for {poi.name} are outside {city} bounds - REJECTED")
+                                coords = None
+                                continue
                         else:
-                            print(f"❌ Coordinates for {poi.name} are outside {city} bounds - REJECTED")
+                            print(f"❌ No coordinates found for {poi.name} with Serper")
                             coords = None
                             continue
-                    else:
-                        print(f"❌ No coordinates found for {poi.name}")
-                        coords = None
-                        continue
-                    
-                except Exception as e:
-                    print(f"❌ Error getting coordinates for {poi.name}: {e}")
-                    coords = None
-                    continue
                     
                 except Exception as e:
                     print(f"❌ Error getting coordinates for {poi.name}: {e}")
@@ -568,32 +389,26 @@ Be extremely thorough - extract as many cool places as you can find mentioned in
                 if coords:
 
                     
-                    # Create summary using the original Reddit content
-                    system_message = f"""Create an authentic, engaging summary for {poi.name} using the actual Reddit content provided.
+                    # Create summary using ONLY the actual Reddit content - NO FAKE QUOTES
+                    system_message = f"""Create a brief, factual summary for {poi.name} based ONLY on the Reddit content provided.
 
-IMPORTANT RULES:
-1. Use ONLY the Reddit content provided - don't make up anything
-2. Include actual user quotes and opinions from the Reddit posts
-3. Make it sound natural and conversational, like a local giving you insider tips
-4. Keep it under 300 characters
-5. ALWAYS start with Reddit-specific phrases like:
-   - "Reddit users love..."
-   - "According to r/{subreddit}..."
-   - "Locals say..."
-   - "r/{subreddit} recommends..."
-   - "The community loves..."
-6. Include specific details mentioned by users (food quality, atmosphere, prices, etc.)
-7. If users mention it's a "hidden gem" or "underrated", include that
-8. Make it feel like real insider knowledge from the community
-9. Include Reddit-specific terms like "upvoted", "recommended", "community favorite"
+CRITICAL RULES:
+1. Use ONLY information that is explicitly stated in the Reddit content
+2. DO NOT create fake quotes or put words in users' mouths
+3. DO NOT use quotation marks unless they appear in the original content
+4. Keep it under 200 characters
+5. Start with a simple factual statement like:
+   - "Mentioned in r/{subreddit} discussions"
+   - "Reddit users discuss this {poi.category.lower()}"
+   - "Featured in r/{subreddit} recommendations"
+6. Only mention specific details that are actually in the content
+7. If the content is vague, keep the summary general and factual
 
-Format examples:
-- "Reddit users love the [specific dish] here and say it's a hidden gem for [reason]"
-- "According to r/{subreddit}, this place has [specific feature] and locals rave about [specific aspect]"
-- "Locals say this is the best [category] in the area, especially for [specific reason]"
-- "r/{subreddit} community highly recommends this spot for [specific reason]"
-
-DO NOT use generic phrases like "great food" or "nice atmosphere" unless users actually said those words."""
+DO NOT:
+- Create fake user quotes
+- Add opinions not in the original content
+- Use quotation marks for made-up quotes
+- Exaggerate or embellish the content"""
                     
                     user_message = f"""Place: {poi.name}
 Category: {poi.category}
@@ -603,40 +418,41 @@ City: {city}
 ORIGINAL REDDIT CONTENT ABOUT THIS PLACE:
 {poi.reddit_context}
 
-Create an authentic summary using the actual Reddit content above. Use real user quotes and opinions."""
+Create a brief, factual summary using ONLY the Reddit content above."""
                     
                     try:
+                        print(f"🤖 Generating summary for {poi.name}...")
                         summary_messages = [
                             SystemMessage(content=system_message),
                             HumanMessage(content=user_message)
                         ]
                         
                         summary_response = llm.invoke(summary_messages)
-                        summary = summary_response.content.strip()[:400]  # Increased length limit
+                        print(f"✅ LLM response received for {poi.name}")
                         
-                        # Validate that the summary actually uses Reddit content
-                        if not any(keyword in summary.lower() for keyword in ['reddit', 'r/', 'users', 'locals', 'community']):
-                            # Fallback to a more direct approach
-                            fallback_summary = f"Reddit users in r/{subreddit} recommend this {poi.category.lower()}. {poi.reddit_context[:200]}..."
-                            summary = fallback_summary[:400]
+                        if not summary_response or not summary_response.content:
+                            print(f"❌ Empty LLM response for {poi.name}")
+                            summary = f"Mentioned in r/{subreddit} discussions"
+                        else:
+                            summary = summary_response.content.strip()[:400]  # Increased length limit
                         
-                        # Additional validation: if summary is too generic, try to make it more authentic
-                        generic_phrases = ['great', 'good', 'nice', 'popular', 'famous', 'well-known']
-                        if any(phrase in summary.lower() for phrase in generic_phrases) and len(poi.reddit_context) > 50:
-                            # Try to extract a more specific quote from the Reddit content
-                            import re
-                            # Look for quotes or specific opinions in the Reddit content
-                            quotes = re.findall(r'"([^"]+)"', poi.reddit_context)
-                            if quotes:
-                                specific_quote = quotes[0][:100]  # Take first quote, limit length
-                                summary = f"Reddit users say: \"{specific_quote}\" about this {poi.category.lower()}"
-                            else:
-                                # Look for specific adjectives or opinions
-                                opinion_words = ['amazing', 'incredible', 'best', 'favorite', 'love', 'hidden gem', 'underrated', 'must-try']
-                                for word in opinion_words:
-                                    if word in poi.reddit_context.lower():
-                                        summary = f"Reddit users call this place {word} - {poi.reddit_context[:150]}..."
-                                        break
+                        # Simple validation and cleanup
+                        summary = summary.strip()
+                        
+                        # Remove any fake quotes that don't exist in original content
+                        if '"' in summary:
+                            # Check if quotes are actually in the original content
+                            quotes_in_summary = re.findall(r'"([^"]+)"', summary)
+                            quotes_in_content = re.findall(r'"([^"]+)"', poi.reddit_context)
+                            
+                            # If quotes in summary aren't in original content, remove them
+                            for quote in quotes_in_summary:
+                                if quote not in quotes_in_content:
+                                    summary = summary.replace(f'"{quote}"', quote)
+                        
+                        # Keep it under 200 characters
+                        if len(summary) > 200:
+                            summary = summary[:197] + "..."
                         
                         print(f"📝 Generated summary for {poi.name}: {summary[:100]}...")
                         
@@ -654,7 +470,10 @@ Create an authentic summary using the actual Reddit content above. Use real user
                         print(f"✅ Created POI: {poi.name} at ({coords['lat']}, {coords['lng']})")
                         
                     except Exception as e:
-                        print(f"Error creating POI summary for {poi.name}: {e}")
+                        print(f"❌ Error creating POI summary for {poi.name}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        
                         # Fallback summary using the original Reddit context
                         reddit_context = poi.reddit_context[:250] if poi.reddit_context else f"Popular {poi.category.lower()} mentioned by r/{subreddit} users"
                         poi_output = POIOutput(
@@ -666,8 +485,11 @@ Create an authentic summary using the actual Reddit content above. Use real user
                             radius=20
                         )
                         final_pois.append(poi_output.model_dump())
+                        print(f"✅ Created fallback POI for {poi.name}")
                 else:
                     print(f"❌ Could not geocode: {poi.name}")
+            
+            print(f"🎯 Final result: Created {len(final_pois)} POIs")
             
             return {
                 "pois": final_pois,
@@ -866,28 +688,42 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
             
             # Use the WORKING method: Direct Playwright extraction
             print("🔍 Using direct Playwright method to extract Reddit post URLs...")
-            post_urls = await extract_reddit_post_urls_from_playwright(page)
+            post_urls = await extract_reddit_post_urls_from_playwright(page, target_subreddit=state['subreddit'])
             
             if post_urls:
                 print(f"✅ Successfully extracted {len(post_urls)} Reddit post URLs using Playwright")
-                # Show first few URLs
+                # Show first few URLs and check subreddit
                 for i, url in enumerate(post_urls[:5]):
-                    print(f"  {i+1}. {url}")
+                    subreddit_in_url = "unknown"
+                    if "/r/" in url:
+                        subreddit_in_url = url.split("/r/")[1].split("/")[0]
+                    print(f"  {i+1}. {url} (subreddit: r/{subreddit_in_url})")
             else:
                 print("❌ No URLs found with direct Playwright method")
                 
                 # Fallback: Try extracting from page content
                 print("🔄 Fallback: Extracting from page content...")
                 page_content = await extract_tool.arun({})
-                post_urls = extract_reddit_post_urls_from_text(page_content)
+                post_urls = extract_reddit_post_urls_from_text(page_content, target_subreddit=state['subreddit'])
                 print(f"✅ Extracted {len(post_urls)} URLs from page content")
             
             # Let LLM select the most relevant posts for POI extraction
             if post_urls and len(post_urls) > 0:
-                print(f"✅ Found {len(post_urls)} Reddit post URLs")
+                # Additional filtering to ensure we only have URLs from the correct subreddit
+                filtered_urls = []
+                for url in post_urls:
+                    if f"/r/{state['subreddit']}/comments/" in url:
+                        filtered_urls.append(url)
+                    else:
+                        print(f"⚠️ Filtered out URL from wrong subreddit: {url}")
                 
-                # Show first 10 URLs to LLM for selection
-                candidate_urls = post_urls[:10]
+                if filtered_urls:
+                    print(f"✅ Found {len(filtered_urls)} Reddit post URLs from r/{state['subreddit']}")
+                    # Show first 10 URLs to LLM for selection
+                    candidate_urls = filtered_urls[:10]
+                else:
+                    print(f"❌ No URLs found from r/{state['subreddit']} after filtering")
+                    candidate_urls = []
                 print(f"🔍 Presenting first {len(candidate_urls)} URLs to LLM for relevance selection...")
                 
                 # Create a simple prompt for URL selection
@@ -1040,48 +876,120 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
         llm_with_structured_output = llm.with_structured_output(POIList)
         
         extract_messages = [
-            SystemMessage(content=f"""You are analyzing Reddit content to find COOL PLACES in {state['city']}.
+            SystemMessage(content=f"""You are analyzing Reddit content to find COOL PLACES that people recommend visiting.
 
-GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting in {state['city']}.
+GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting.
 
-CRITICAL RULES:
-1. Extract EVERY place name mentioned in the Reddit content that people recommend or talk about positively
-2. Focus on places that Reddit users say are cool, fun, interesting, or worth visiting
-3. Look for places that people recommend to others
-4. Include both specific business names AND general area names that people mention positively
-5. Look for places in post titles, comments, and any other text
+IMPORTANT: Extract ALL places that are mentioned positively in the provided Reddit content, especially places that people recommend or say are cool/fun.
+Be thorough and comprehensive - look for any place names, businesses, attractions, neighborhoods, etc. that people talk about positively.
 
-EXTRACT ALL COOL PLACES mentioned in the content, including:
-- Any business names that people recommend
-- Any venue names that people say are fun
-- Any location names that people mention positively
-- Any area names that people recommend visiting
-- Any building names that people say are interesting
-- Any street names that seem like important destinations
-- Any landmark names that people recommend
-- Any other place names that people talk about positively
+Extract ALL COOL PLACES mentioned in this content, including:
+- Restaurants, cafes, bars, food spots that people recommend
+- Museums, galleries, cultural venues that people say are interesting
+- Parks, trails, outdoor spaces that people recommend
+- Shopping centers, markets, boutiques that people mention positively
+- Entertainment venues, theaters, cinemas that people recommend
+- Tourist attractions, landmarks that people say are worth visiting
+- Local businesses and services that people recommend
+- Neighborhoods, districts, areas that people mention positively
+- Any specific place names with locations that people talk about positively
 
-DO NOT extract:
-- Generic terms like "the mall" or "a park" (unless they're part of a specific name)
-- Vague references like "that place" or "the spot"
-- Places that people mention negatively
+For each place, provide:
+1. The exact name as mentioned
+2. A brief description based on what's said about it
+3. The category
+4. The specific Reddit context where it's mentioned
 
-For each place found, provide:
-- name: The exact name as mentioned in Reddit
-- description: Brief category (e.g., "Restaurant", "Park", "Museum", "Neighborhood")
-- category: Type of place
-- reddit_context: The exact Reddit text that mentions this place
+Be comprehensive - extract as many cool places as you can find mentioned in the content."""),
+            HumanMessage(content=f"""Find ALL COOL PLACES that people recommend visiting.
 
-Be extremely thorough - extract as many cool places as you can find mentioned in the content."""),
-            HumanMessage(content=f"Find ALL COOL PLACES in {state['city']} that Reddit users recommend visiting:\n\n{content[:12000]}")
+Here is the Reddit content to analyze:
+
+{content[:12000]}
+
+Extract ALL COOL PLACES mentioned in this content, including:
+- Restaurants, cafes, bars, food spots that people recommend
+- Museums, galleries, cultural venues that people say are interesting
+- Parks, trails, outdoor spaces that people recommend
+- Shopping centers, markets, boutiques that people mention positively
+- Entertainment venues, theaters, cinemas that people recommend
+- Tourist attractions, landmarks that people say are worth visiting
+- Local businesses and services that people recommend
+- Neighborhoods, districts, areas that people mention positively
+- Any specific place names with locations that people talk about positively
+
+For each place, provide:
+1. The exact name as mentioned
+2. A brief description based on what's said about it
+3. The category
+4. The specific Reddit context where it's mentioned
+
+Be comprehensive - extract as many cool places as you can find mentioned in the content.""")
         ]
         
         pois_response = await llm_with_structured_output.ainvoke(extract_messages)
         pois = pois_response.pois
         print(f"Extracted {len(pois)} POIs: {[poi.name for poi in pois]}")
         
-        # For now, accept all POIs found by the LLM since verification is too strict
-        print(f"✅ Accepting all {len(pois)} POIs found by LLM")
+        # AGGRESSIVE REGEX EXTRACTION AS FALLBACK
+        print("🔍 Running aggressive regex extraction as fallback...")
+        import re
+        
+        # Look for capitalized place names (likely proper nouns)
+        capitalized_patterns = [
+            r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',  # Two word capitalized names
+            r'\b[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+\b',  # Three word capitalized names
+            r'\b[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+\b',  # Four word capitalized names
+        ]
+        
+        # Look for specific place indicators
+        place_indicators = [
+            r'\b[A-Z][a-z]+ (Street|Avenue|Road|Boulevard|Drive|Lane|Place|Court|Terrace|Crescent)\b',
+            r'\b[A-Z][a-z]+ (Park|Museum|Gallery|Theater|Theatre|Cinema|Restaurant|Cafe|Bar|Pub|Club)\b',
+            r'\b[A-Z][a-z]+ (Market|Mall|Centre|Center|Plaza|Square|Building|Tower|Bridge|Station)\b',
+            r'\b[A-Z][a-z]+ (Island|Beach|Trail|Path|Garden|Zoo|Aquarium|Stadium|Arena|Hall)\b',
+        ]
+        
+        # Look for neighborhood patterns
+        neighborhood_patterns = [
+            r'\b[A-Z][a-z]+ (Village|Town|District|Area|Neighborhood|Neighbourhood|Quarter|Zone)\b',
+            r'\b[A-Z][a-z]+ (East|West|North|South|Central|Downtown|Uptown|Midtown)\b',
+        ]
+        
+        all_patterns = capitalized_patterns + place_indicators + neighborhood_patterns
+        
+        found_places = set()
+        for pattern in all_patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = ' '.join(match)
+                # Filter out common words that aren't places
+                common_words = ['Reddit', 'Toronto', 'Canada', 'Ontario', 'Personal', 'Please', 'Submit', 'Share', 'Reply', 'Comment', 'Post', 'User', 'Member', 'Online', 'Filter', 'Show', 'Hide', 'Sort', 'Best', 'Top', 'New', 'Old', 'Controversial', 'Q&A', 'More', 'Less', 'Points', 'Children', 'Permalink', 'Embed', 'Save', 'Parent', 'Report', 'Track', 'Me', 'Reply', 'Share', 'More', 'Replies', 'Sort', 'By', 'Best', 'Top', 'New', 'Controversial', 'Old', 'Q&A', 'Open', 'Comment', 'Options', 'Best', 'Top', 'New', 'Controversial', 'Old', 'Q&A']
+                if match not in common_words and len(match) > 3:
+                    found_places.add(match)
+        
+        print(f"🔍 Regex found {len(found_places)} additional potential places")
+        
+        # If LLM found very few POIs, use regex results as backup
+        if len(pois) < 10 and found_places:
+            print(f"⚠️ LLM only found {len(pois)} POIs, using regex results as backup...")
+            # Convert regex results to POI format
+            for place_name in list(found_places)[:20]:  # Limit to 20 to avoid spam
+                # Check if this place is already in LLM results
+                if not any(poi.name.lower() == place_name.lower() for poi in pois):
+                    # Create a simple POI from regex result
+                    from reddit.models import POI
+                    regex_poi = POI(
+                        name=place_name,
+                        description=f"Place mentioned in Reddit discussions",
+                        category="Location",
+                        reddit_context=f"Mentioned in Reddit content: {place_name}"
+                    )
+                    pois.append(regex_poi)
+                    print(f"➕ Added regex POI: {place_name}")
+        
+        print(f"✅ Final result: {len(pois)} POIs (LLM: {len(pois_response.pois)}, Regex additions: {len(pois) - len(pois_response.pois)})")
         
         return {
             **state,
@@ -1099,45 +1007,36 @@ Be extremely thorough - extract as many cool places as you can find mentioned in
             return {**state, "extracted_pois": [], "current_step": "end"}
         
         # Create a new POI model for enhanced descriptions
-        class EnhancedPOI(BaseModel):
-            name: str = Field(description="Name of the point of interest")
-            description: str = Field(description="Brief category description")
-            category: str = Field(description="Type of place")
-            reddit_context: str = Field(description="Original Reddit content")
-            user_quote: str = Field(description="A short, authentic quote from Reddit users about this place (max 100 words)")
-        
-        class EnhancedPOIList(BaseModel):
-            city: str = Field(description="The city being analyzed")
-            pois: List[EnhancedPOI] = Field(description="List of enhanced POIs with user quotes")
+                # Models are now imported from reddit.models
         
         llm_with_enhanced_output = llm.with_structured_output(EnhancedPOIList)
         
-        # Create enhanced descriptions with user quotes
+        # Create factual descriptions based ONLY on actual Reddit content
         description_messages = [
-            SystemMessage(content=f"""You are an expert at creating authentic, engaging descriptions for places in {state['city']} by quoting what Reddit users actually said.
+            SystemMessage(content=f"""Create brief, factual descriptions for places in {state['city']} based ONLY on the Reddit content provided.
 
-For each place, create a short, authentic description (max 100 words) that:
-1. ALWAYS starts with Reddit-specific phrases like "Reddit users love...", "According to r/{state['subreddit']}...", "Locals say...", "The community recommends..."
-2. Quotes directly from what Reddit users said about the place
-3. Captures the authentic voice and enthusiasm of Reddit users
-4. Highlights what makes the place special according to locals
-5. Uses actual phrases and recommendations from the Reddit content
-6. Maintains the casual, honest tone of Reddit recommendations
-7. Includes Reddit-specific terms like "upvoted", "recommended", "community favorite", "hidden gem"
+CRITICAL RULES:
+1. Use ONLY information explicitly stated in the Reddit content
+2. DO NOT create fake quotes or put words in users' mouths
+3. DO NOT use quotation marks unless they appear in the original content
+4. Keep descriptions under 100 words
+5. Start with factual statements like:
+   - "Mentioned in r/{state['subreddit']} discussions"
+   - "Reddit users discuss this place"
+   - "Featured in community recommendations"
+6. Only mention specific details that are actually in the content
+7. If content is vague, keep description general and factual
 
-Focus on:
-- What users specifically recommend doing there
-- What makes it unique or special
-- Why locals love it
-- Any insider tips or hidden gems mentioned
-- Reddit community consensus and upvotes
-
-Make the descriptions feel like they're coming directly from Reddit users who've been there and include Reddit community language."""),
-            HumanMessage(content=f"""Create authentic user quotes for these places in {state['city']} based on the Reddit content:
+DO NOT:
+- Create fake user quotes
+- Add opinions not in the original content
+- Use quotation marks for made-up quotes
+- Exaggerate or embellish the content"""),
+            HumanMessage(content=f"""Create factual descriptions for these places in {state['city']} based ONLY on the Reddit content:
 
 {chr(10).join([f"• {poi.name} ({poi.category}): {poi.reddit_context[:300]}..." for poi in pois])}
 
-Create short, authentic quotes (max 100 words each) that capture what Reddit users actually said about each place.""")
+Create brief, factual descriptions (max 100 words each) that accurately reflect what's in the Reddit content without adding fake quotes.""")
         ]
         
         enhanced_response = await llm_with_enhanced_output.ainvoke(description_messages)
@@ -1185,16 +1084,8 @@ Create short, authentic quotes (max 100 words each) that capture what Reddit use
     # Simple subreddit selection - just use the city name
     subreddit = city.lower()
     
-    # Search terms
-    search_terms = [
-        "things%20to%20do",
-        "best%20places",
-        "hidden%20gems",
-        "secret%20spots",
-        "local%20favorites"
-    ]
-    
-    search_term = random.choice(search_terms)
+    # Get search term from organized module
+    search_term = get_random_search_term(city)
     
     print(f"🔍 Using search term: {search_term}")
     
