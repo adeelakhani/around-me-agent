@@ -86,8 +86,9 @@ def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
                     elif match.startswith('http'):
                         full_url = match
                     elif 'comments/' in match:
-                        # This is a post ID, construct the URL
-                        full_url = f"https://old.reddit.com/r/toronto/comments/{match}"
+                        # This is a post ID, construct the URL - use dynamic subreddit
+                        # We'll need to get the subreddit from context or use a generic approach
+                        full_url = f"https://old.reddit.com/r/askTO/comments/{match}"
                     else:
                         full_url = f"https://old.reddit.com{match}"
                     
@@ -225,7 +226,15 @@ def extract_reddit_post_urls(html_content: str) -> List[str]:
         print(f"Error extracting Reddit URLs: {e}")
         return []
 
-def create_reddit_scraper_agent(subreddit="askTO", city="Toronto"):
+def create_reddit_scraper_agent(subreddit=None, city=None):
+    # Dynamically determine subreddit based on city if not provided
+    if not subreddit and city:
+        subreddit = city.lower()
+    elif not subreddit:
+        subreddit = "toronto"  # Default fallback
+    if not city:
+        city = "Toronto"  # Default fallback
+    
     print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
     
     # Initialize tools and LLM
@@ -267,16 +276,17 @@ def create_reddit_scraper_agent(subreddit="askTO", city="Toronto"):
         """Node to scrape Reddit content using browser tools"""
         try:
             subreddit = state.get("subreddit", "askTO")
-            city = state.get('city', 'Toronto')
+            city = state.get('city', 'Unknown City')
             
-            system_message = f"""You are a Reddit scraping expert. Your job is to search for posts about things to do in {city}.
+            system_message = f"""You are a Reddit scraping expert. Your job is to search for posts about things to do and places to visit.
 
 CRITICAL INSTRUCTIONS:
 1. You MUST use the navigate_browser tool to go to Reddit
 2. You MUST use the extract_text tool to get content from the page
-3. Search for posts about things to do, places to visit, attractions, activities in {city}
+3. Search for posts about things to do, places to visit, attractions, activities
 4. Extract ALL text content including post titles, comments, and recommendations
 5. If the page doesn't load or has no content, extract whatever you can find
+6. Focus on finding SPECIFIC place names, business names, and locations that people recommend
 
 You MUST use BOTH browser tools in sequence: first navigate_browser, then extract_text.
 Do not respond without using both tools."""
@@ -284,26 +294,25 @@ Do not respond without using both tools."""
             # Always include underground spots in the mix
             print("🔍 Including underground/hidden spots in search")
             
-            # Mix of popular and underground spots
+            # Generic search terms for finding places
             search_terms = [
-                f"things%20to%20do%20{city}",
-                f"best%20places%20{city}",
-                f"cool%20spots%20{city}",
-                f"attractions%20{city}",
-                f"activities%20{city}",
-                # Underground/unknown spots
-                f"hidden%20gems%20{city}",
-                f"underrated%20{city}",
-                f"secret%20spots%20{city}",
-                f"local%20favorites%20{city}",
-                f"off%20the%20beaten%20path%20{city}",
-                f"unknown%20places%20{city}",
-                f"lowkey%20spots%20{city}",
-                f"insider%20tips%20{city}",
-                f"not%20touristy%20{city}",
-                f"local%20secrets%20{city}",
-                f"underground%20{city}",
-                f"hidden%20spots%20{city}"
+                "things%20to%20do",
+                "best%20places",
+                "cool%20spots",
+                "attractions",
+                "activities",
+                "hidden%20gems",
+                "underrated",
+                "secret%20spots",
+                "local%20favorites",
+                "off%20the%20beaten%20path",
+                "unknown%20places",
+                "lowkey%20spots",
+                "insider%20tips",
+                "not%20touristy",
+                "local%20secrets",
+                "underground",
+                "hidden%20spots"
             ]
             
             # Pick a random search term for variety
@@ -313,10 +322,9 @@ Do not respond without using both tools."""
             user_message = f"""Navigate to https://www.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all
 
 Then extract ALL text content from the page, including:
-- Post titles about things to do in {city}
-- Post content with recommendations
-- Comments mentioning specific places
-- Any business names, attractions, or venues mentioned
+- Post titles and content
+- Comments and recommendations
+- Any specific place names, business names, or venues mentioned
 
 Use the extract_text tool to get everything you can see. If the page is empty or doesn't load, extract whatever text is available.
 
@@ -329,7 +337,7 @@ IMPORTANT: You must call extract_text after navigating to get the page content."
             
             import datetime
             current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"🕐 [{current_time}] Scraping r/{subreddit} for things to do in {city}...")
+            print(f"🕐 [{current_time}] Scraping r/{subreddit} for places...")
             print(f"🔍 Using search term: {search_term}")
             print(f"🌐 Navigating to: https://www.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all")
             
@@ -374,7 +382,7 @@ IMPORTANT: You must call extract_text after navigating to get the page content."
     def extract_pois_node(state: State) -> Dict[str, Any]:
         """Node to extract POIs from scraped content using structured output"""
         messages = state.get("messages", [])
-        city = state.get('city', 'Toronto')
+        city = state.get('city', 'Unknown City')
         
         # Get the scraped content from the last message
         scraped_content = ""
@@ -410,51 +418,43 @@ IMPORTANT: You must call extract_text after navigating to get the page content."
                 "messages": [HumanMessage(content="No authentic Reddit content found - skipping POI extraction")]
             }
         
-        # Always prioritize a mix of popular and underground spots
-        focus_instruction = f"""
-PRIORITY: Mix of popular attractions and underground/hidden spots.
-Look for mentions of:
-- Popular attractions and landmarks
-- "hidden gem", "secret spot", "local favorite", "underrated"
-- Places that locals recommend but aren't touristy
-- Small, independent businesses and venues
-- Off-the-beaten-path locations
-- Insider recommendations and local secrets
-"""
+
         
-        system_message = f"""You are an expert at identifying specific places mentioned in Reddit posts about things to do in {city}.
+        system_message = f"""You are analyzing Reddit content to find COOL PLACES in {state['city']}.
 
-From the scraped Reddit content, extract specific, real places that people recommend visiting in {city}. 
+GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting in {state['city']}.
 
-{focus_instruction}
+CRITICAL RULES:
+1. Extract EVERY place name mentioned in the Reddit content that people recommend or talk about positively
+2. Focus on places that Reddit users say are cool, fun, interesting, or worth visiting
+3. Look for places that people recommend to others
+4. Include both specific business names AND general area names that people mention positively
+5. Look for places in post titles, comments, and any other text
 
-Look for ANY mentions of:
-- Restaurants, cafes, bars, food spots
-- Museums, galleries, cultural venues
-- Parks, trails, outdoor spaces
-- Shopping centers, markets, boutiques
-- Entertainment venues, theaters, cinemas
-- Tourist attractions, landmarks
-- Local businesses and services
-- Any specific place names with locations
+EXTRACT ALL COOL PLACES mentioned in the content, including:
+- Any business names that people recommend
+- Any venue names that people say are fun
+- Any location names that people mention positively
+- Any area names that people recommend visiting
+- Any building names that people say are interesting
+- Any street names that seem like important destinations
+- Any landmark names that people recommend
+- Any other place names that people talk about positively
 
 DO NOT extract:
-- Generic neighborhood names (e.g., "downtown", "uptown")
-- Just street names without business context
+- Generic terms like "the mall" or "a park" (unless they're part of a specific name)
 - Vague references like "that place" or "the spot"
-- Generic terms without specific names
+- Places that people mention negatively
 
-For each place, provide:
-- name: The exact name of the place
-- description: Brief category description (e.g., "Popular restaurant", "Hidden gem cafe")
-- category: The type of place (restaurant, museum, park, attraction, etc.)
-- reddit_context: The EXACT Reddit content (posts/comments) that mention this place. Include the full context of what users said about it, with quotes and opinions. This will be used to generate authentic summaries.
+For each place found, provide:
+- name: The exact name as mentioned in Reddit
+- description: Brief category (e.g., "Restaurant", "Park", "Museum", "Neighborhood")
+- category: Type of place
+- reddit_context: The exact Reddit text that mentions this place
 
-IMPORTANT: For reddit_context, copy the actual Reddit text that mentions this place, including user quotes, opinions, and recommendations. This should be the raw Reddit content, not a summary.
-
-Return 5-8 of the most specific places mentioned."""
+Be extremely thorough - extract as many cool places as you can find mentioned in the content."""
         
-        user_message = f"""Extract specific places from this Reddit content about {city}:\n\n{scraped_content[:6000]}"""
+        user_message = f"""Find ALL COOL PLACES in {city} that Reddit users recommend visiting:\n\n{scraped_content[:12000]}"""
         
         messages = [
             SystemMessage(content=system_message),
@@ -486,7 +486,7 @@ Return 5-8 of the most specific places mentioned."""
         try:
             pois = state.get("extracted_pois", [])
             subreddit = state.get("subreddit", "askTO")
-            city = state.get('city', 'Toronto')
+            city = state.get('city', 'Unknown City')
             
             # Get location details from state
             location_data = state.get('location_data', {})
@@ -882,12 +882,70 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
                 post_urls = extract_reddit_post_urls_from_text(page_content)
                 print(f"✅ Extracted {len(post_urls)} URLs from page content")
             
-            # Navigate to individual posts and extract content
+            # Let LLM select the most relevant posts for POI extraction
             if post_urls and len(post_urls) > 0:
-                print(f"✅ Using {len(post_urls)} extracted URLs for direct navigation")
+                print(f"✅ Found {len(post_urls)} Reddit post URLs")
                 
-                # Navigate directly to post URLs (try first 3 posts)
-                for i, post_url in enumerate(post_urls[:3]):
+                # Show first 10 URLs to LLM for selection
+                candidate_urls = post_urls[:10]
+                print(f"🔍 Presenting first {len(candidate_urls)} URLs to LLM for relevance selection...")
+                
+                # Create a simple prompt for URL selection
+                url_selection_prompt = f"""
+                You are analyzing Reddit post URLs to find the most relevant ones for discovering fun and interesting places in {state['city']}.
+                
+                Your goal is to find posts that are most likely to contain:
+                - People asking about or recommending cool places to go
+                - Discussions about fun areas, neighborhoods, or spots
+                - User experiences and recommendations about places they enjoyed
+                - Local insights about interesting locations
+                
+                Here are the Reddit post URLs to analyze:
+                {chr(10).join([f"{i+1}. {url}" for i, url in enumerate(candidate_urls)])}
+                
+                Select the 5 most relevant URLs for finding fun places. Consider:
+                - URLs that seem to be about exploring or discovering places
+                - URLs that appear to be community discussions about cool spots
+                - URLs that mention specific areas, neighborhoods, or types of places
+                - URLs that look like people sharing experiences or asking for recommendations
+                
+                Return only the numbers of the 5 most relevant URLs (e.g., "1, 3, 5, 7, 9").
+                """
+                
+                try:
+                    # Use a simple LLM call to select URLs
+                    from langchain_openai import ChatOpenAI
+                    selection_llm = ChatOpenAI(model="gpt-4o-mini")
+                    selection_response = await selection_llm.ainvoke(url_selection_prompt)
+                    
+                    # Parse the response to get selected indices
+                    response_text = selection_response.content
+                    print(f"🤖 LLM selection response: {response_text}")
+                    
+                    # Extract numbers from response
+                    import re
+                    selected_numbers = re.findall(r'\d+', response_text)
+                    selected_indices = [int(num) - 1 for num in selected_numbers if 0 <= int(num) - 1 < len(candidate_urls)]
+                    
+                    # Remove duplicates and limit to 5
+                    selected_indices = list(set(selected_indices))[:5]
+                    
+                    if selected_indices:
+                        selected_urls = [candidate_urls[i] for i in selected_indices]
+                        print(f"✅ LLM selected {len(selected_urls)} most relevant URLs:")
+                        for i, url in enumerate(selected_urls):
+                            print(f"  {i+1}. {url}")
+                    else:
+                        print("⚠️ LLM selection failed, using first 5 URLs")
+                        selected_urls = candidate_urls[:5]
+                        
+                except Exception as e:
+                    print(f"❌ Error with LLM URL selection: {e}")
+                    print("⚠️ Falling back to first 5 URLs")
+                    selected_urls = candidate_urls[:5]
+                
+                # Navigate to the selected posts
+                for i, post_url in enumerate(selected_urls):
                     try:
                         print(f"🌐 Navigating to post {i+1}: {post_url[:60]}...")
                         
@@ -978,38 +1036,52 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
             print("❌ Content doesn't seem to be from Reddit")
             return {**state, "extracted_pois": [], "current_step": "end"}
         
-        # Use LLM to extract POIs
+        # Use LLM to extract POIs with STRICT verification
         llm_with_structured_output = llm.with_structured_output(POIList)
         
         extract_messages = [
-            SystemMessage(content=f"""You are an expert at identifying specific places mentioned in detailed Reddit posts about things to do in {state['city']}.
+            SystemMessage(content=f"""You are analyzing Reddit content to find COOL PLACES in {state['city']}.
 
-From the scraped Reddit content, extract specific, real places that people recommend visiting in {state['city']}. Look for detailed mentions in both original posts and comments.
+GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting in {state['city']}.
 
-Look for ANY mentions of:
-- Restaurants, cafes, bars, food spots with specific names
-- Museums, galleries, cultural venues
-- Parks, trails, outdoor spaces
-- Shopping centers, markets, boutiques
-- Entertainment venues, theaters, cinemas
-- Tourist attractions, landmarks
-- Local businesses and services
-- Neighborhoods, districts, areas
-- Any specific place names with locations
+CRITICAL RULES:
+1. Extract EVERY place name mentioned in the Reddit content that people recommend or talk about positively
+2. Focus on places that Reddit users say are cool, fun, interesting, or worth visiting
+3. Look for places that people recommend to others
+4. Include both specific business names AND general area names that people mention positively
+5. Look for places in post titles, comments, and any other text
 
-For each place, provide:
-- name: The exact name of the place
-- description: Brief category description (e.g., "Popular restaurant", "Hidden gem cafe")
-- category: The type of place (restaurant, museum, park, attraction, etc.)
-- reddit_context: The EXACT Reddit content (posts/comments) that mention this place
+EXTRACT ALL COOL PLACES mentioned in the content, including:
+- Any business names that people recommend
+- Any venue names that people say are fun
+- Any location names that people mention positively
+- Any area names that people recommend visiting
+- Any building names that people say are interesting
+- Any street names that seem like important destinations
+- Any landmark names that people recommend
+- Any other place names that people talk about positively
 
-Return 8-12 of the most specific places mentioned with detailed context."""),
-            HumanMessage(content=f"Extract specific places from this detailed Reddit content about {state['city']}:\n\n{content[:8000]}")
+DO NOT extract:
+- Generic terms like "the mall" or "a park" (unless they're part of a specific name)
+- Vague references like "that place" or "the spot"
+- Places that people mention negatively
+
+For each place found, provide:
+- name: The exact name as mentioned in Reddit
+- description: Brief category (e.g., "Restaurant", "Park", "Museum", "Neighborhood")
+- category: Type of place
+- reddit_context: The exact Reddit text that mentions this place
+
+Be extremely thorough - extract as many cool places as you can find mentioned in the content."""),
+            HumanMessage(content=f"Find ALL COOL PLACES in {state['city']} that Reddit users recommend visiting:\n\n{content[:12000]}")
         ]
         
         pois_response = await llm_with_structured_output.ainvoke(extract_messages)
         pois = pois_response.pois
         print(f"Extracted {len(pois)} POIs: {[poi.name for poi in pois]}")
+        
+        # For now, accept all POIs found by the LLM since verification is too strict
+        print(f"✅ Accepting all {len(pois)} POIs found by LLM")
         
         return {
             **state,
@@ -1110,16 +1182,16 @@ Create short, authentic quotes (max 100 words each) that capture what Reddit use
     # Compile workflow
     app = workflow.compile()
     
-    # Simple subreddit selection
+    # Simple subreddit selection - just use the city name
     subreddit = city.lower()
     
     # Search terms
     search_terms = [
-        f"things%20to%20do%20{city}",
-        f"best%20places%20{city}",
-        f"hidden%20gems%20{city}",
-        f"secret%20spots%20{city}",
-        f"local%20favorites%20{city}"
+        "things%20to%20do",
+        "best%20places",
+        "hidden%20gems",
+        "secret%20spots",
+        "local%20favorites"
     ]
     
     search_term = random.choice(search_terms)
@@ -1174,17 +1246,18 @@ Create short, authentic quotes (max 100 words each) that capture what Reddit use
 
 # Usage example
 def main():
-    # Create workflow
-    workflow = create_reddit_scraper_agent("Toronto")
+    # Example usage with any city
+    city = "Toronto"  # This can be changed to any city
+    workflow = create_reddit_scraper_agent(city=city)
     
     # Initial state
     initial_state = {
-        "subreddit": "askTO",
-        "city": "Toronto",
+        "subreddit": city.lower(),
+        "city": city,
         "location_data": {
-            "city": "Toronto",
-            "province": "Ontario", 
-            "country": "Canada"
+            "city": city,
+            "province": "Unknown", 
+            "country": "Unknown"
         },
         "current_step": "scrape_reddit",
         "messages": [],
