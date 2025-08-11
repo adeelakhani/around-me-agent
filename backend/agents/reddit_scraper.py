@@ -1144,21 +1144,39 @@ Extract AT LEAST 15-20 places if possible. Be comprehensive and thorough.""")
             print("❌ No POIs extracted from LangGraph workflow")
             return []
         
-        # Convert to POI format with geocoding
+        # Convert to POI format with proper geocoding
         final_pois = []
         for poi in pois:
-            # Simple fallback coordinates with variation
-            lat_variation = random.uniform(-0.01, 0.01)
-            lng_variation = random.uniform(-0.01, 0.01)
+            print(f"🗺️ Geocoding {poi.name}...")
             
-            poi_output = {
-                "name": poi.name,
-                "lat": lat + lat_variation,
-                "lng": lng + lng_variation,
-                "summary": poi.description,  # Use the enhanced user quote description
-                "type": "reddit",
-                "radius": 20
-            }
+            # Actually use the geocoding function
+            coords = geocode_with_fallback(poi.name, city, province, country)
+            
+            if coords:
+                poi_output = {
+                    "name": poi.name,
+                    "lat": coords['lat'],
+                    "lng": coords['lng'],
+                    "summary": poi.description,
+                    "type": "reddit",
+                    "radius": 20
+                }
+                print(f"✅ Geocoded {poi.name}: ({coords['lat']}, {coords['lng']})")
+            else:
+                # Only use fallback if geocoding completely fails
+                print(f"⚠️ Geocoding failed for {poi.name}, using fallback coordinates")
+                lat_variation = random.uniform(-0.005, 0.005)  # Smaller variation
+                lng_variation = random.uniform(-0.005, 0.005)
+                
+                poi_output = {
+                    "name": poi.name,
+                    "lat": lat + lat_variation,
+                    "lng": lng + lng_variation,
+                    "summary": poi.description,
+                    "type": "reddit",
+                    "radius": 20
+                }
+            
             final_pois.append(poi_output)
         
         print(f"✅ Created {len(final_pois)} Reddit POIs with LangGraph workflow")

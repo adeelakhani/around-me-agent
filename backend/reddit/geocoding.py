@@ -3,9 +3,12 @@ Geocoding utilities for Reddit POI extraction
 """
 import os
 import requests
+import re
 from typing import Optional, Dict
 from utils.location import is_coordinates_in_city
 from langchain_core.messages import SystemMessage, HumanMessage
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 def search_serper(query: str) -> dict:
     """Search using Serper.dev API"""
@@ -30,85 +33,320 @@ def search_serper(query: str) -> dict:
         return {"organic": [], "knowledgeGraph": None}
 
 def geocode_with_fallback(poi_name: str, city: str, province: str, country: str) -> Optional[Dict[str, float]]:
-    """Try multiple geocoding methods with fallbacks - SERPER FIRST for accuracy"""
-    print(f"🗺️ Geocoding {poi_name} with fallback methods...")
+    """Advanced geocoding: KnowledgeGraph → Site-specific Serper → HTML scraping → Google Places → OSM"""
+    print(f"🗺️ ===== STARTING GEOCODING FOR: {poi_name} =====")
+    print(f"📍 Target city: {city}, {province}, {country}")
     
-    # Method 1: Try Serper.dev first (most accurate for specific places)
+    # Step 1: Try Serper KnowledgeGraph first (most reliable)
     try:
-        print(f"🔍 Trying Serper for {poi_name}...")
-        search_queries = [
-            f'"{poi_name}" "{city}" exact address coordinates',
-            f'"{poi_name}" "{city}" location address',
-            f'"{poi_name}" "{city}" map coordinates',
-            f'"{poi_name}" "{city}"'
+        print(f"🔍 STEP 1: Checking Serper KnowledgeGraph for {poi_name}...")
+        search_query = f'"{poi_name}" "{city}"'
+        search_results = search_serper(search_query)
+        
+        if search_results.get("knowledgeGraph") and search_results["knowledgeGraph"].get("address"):
+            address = search_results["knowledgeGraph"]["address"]
+            print(f"✅ KnowledgeGraph found address: {address}")
+            
+            # Try to geocode this address
+            coords = geocode_address(address, city, province, country)
+            if coords:
+                return coords
+        else:
+            print("❌ No KnowledgeGraph address found")
+            
+    except Exception as e:
+        print(f"❌ KnowledgeGraph search error: {e}")
+    
+    # Step 2: Try site-specific Serper searches for structured addresses
+    try:
+        print(f"🔍 STEP 2: Using site-specific Serper searches...")
+        site_queries = [
+            f'"{poi_name}" "{city}" site:maps.google.com',
+            f'"{poi_name}" "{city}" site:yellowpages.ca',
+            f'"{poi_name}" "{city}" site:yelp.ca',
+            f'"{poi_name}" "{city}" site:facebook.com',
+            f'"{poi_name}" "{city}" site:google.com/maps',
+            f'"{poi_name}" "{city}" site:opentable.ca'
         ]
         
-        for i, search_query in enumerate(search_queries):
-            print(f"  Serper search {i+1}: {search_query}")
-            search_results = search_serper(search_query)
+        candidate_addresses = []
+        
+        for i, site_query in enumerate(site_queries):
+            print(f"  🔎 Site search {i+1}: {site_query}")
+            search_results = search_serper(site_query)
             
             if search_results.get("organic") and len(search_results["organic"]) > 0:
-                print(f"✅ Serper search {i+1} returned {len(search_results['organic'])} results")
+                print(f"✅ Site search {i+1} returned {len(search_results['organic'])} results")
                 
-                # Extract text from search results
-                search_text = ""
-                if search_results.get("organic"):
-                    for result in search_results["organic"][:3]:  # Top 3 results
-                        search_text += f"Title: {result.get('title', '')}\n"
-                        search_text += f"Snippet: {result.get('snippet', '')}\n\n"
+                # Extract addresses from snippets using regex
+                for result in search_results["organic"][:2]:  # Top 2 results per site
+                    snippet = result.get("snippet", "")
+                    title = result.get("title", "")
+                    link = result.get("link", "")
+                    
+                    # Combine text for address extraction
+                    text = f"{title} {snippet}"
+                    
+                    # Extract addresses using regex
+                    import re
+                    address_pattern = r"\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Lane|Ln|Way|Court|Ct|Crescent|Cres|Place|Pl|Terrace|Ter|Circle|Cir|Square|Sq|Parkway|Pkwy)"
+                    addresses = re.findall(address_pattern, text, re.IGNORECASE)
+                    
+                    for addr in addresses:
+                        if addr not in candidate_addresses:
+                            candidate_addresses.append(addr)
+                            print(f"    📍 Found candidate address: {addr}")
                 
-                if search_results.get("knowledgeGraph"):
-                    kg = search_results["knowledgeGraph"]
-                    search_text += f"Knowledge Graph: {kg.get('title', '')}\n"
-                    search_text += f"Description: {kg.get('description', '')}\n"
-                
-                # Use LLM to extract coordinates from search results
-                from langchain_openai import ChatOpenAI
-                from reddit.models import Coordinates
-                
-                llm = ChatOpenAI(model="gpt-4o-mini")
-                llm_with_coords = llm.with_structured_output(Coordinates)
-                
-                coord_response = llm_with_coords.invoke([
-                    SystemMessage(content="""Extract EXACT latitude and longitude coordinates for the specific place.
-
-LOOK FOR:
-- GPS coordinates like "43.6532, -79.3832" or "43°39'11.5"N 79°22'59.9"W"
-- Address with street number and name
-- "Located at" or "Address:" followed by coordinates
-- Google Maps links with coordinates
-- Business listings with exact addresses
-
-ONLY return coordinates if they are SPECIFICALLY for the exact place mentioned.
-If coordinates are for general city area, return 0.0, 0.0"""),
-                    HumanMessage(content=search_text)
-                ])
-                
-                if coord_response.lat != 0.0 and coord_response.lng != 0.0:
-                    # Check if coordinates are within the city bounds
-                    if is_coordinates_in_city(coord_response.lat, coord_response.lng, city):
-                        coords = {
-                            'lat': coord_response.lat,
-                            'lng': coord_response.lng
-                        }
-                        print(f"✅ Serper found coordinates for {poi_name}: ({coords['lat']}, {coords['lng']})")
-                        return coords
-                    else:
-                        print(f"❌ Serper coordinates for {poi_name} are outside {city} bounds")
-                else:
-                    print(f"❌ No coordinates found for {poi_name} with Serper search {i+1}")
+                # Also try to scrape the actual page HTML for addresses
+                if search_results["organic"]:
+                    try:
+                        import requests
+                        from bs4 import BeautifulSoup
+                        
+                        page_url = search_results["organic"][0]["link"]
+                        print(f"    🌐 Scraping: {page_url}")
+                        
+                        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                        response = requests.get(page_url, headers=headers, timeout=5)
+                        
+                        if response.status_code == 200:
+                            soup = BeautifulSoup(response.text, 'html.parser')
+                            page_text = soup.get_text()
+                            
+                            # Extract addresses from page HTML
+                            html_addresses = re.findall(address_pattern, page_text, re.IGNORECASE)
+                            
+                            for addr in html_addresses[:3]:  # Limit to first 3
+                                if addr not in candidate_addresses:
+                                    candidate_addresses.append(addr)
+                                    print(f"    📍 Found HTML address: {addr}")
+                                    
+                    except Exception as e:
+                        print(f"    ⚠️ HTML scraping failed: {e}")
             else:
-                print(f"⚠️ Serper search {i+1} returned no results")
+                print(f"⚠️ Site search {i+1} returned no results")
         
-        print(f"❌ All Serper searches failed for {poi_name}")
-        
+        # Step 3: Use LLM to rank and select the best address
+        if candidate_addresses:
+            print(f"🔍 STEP 3: Ranking {len(candidate_addresses)} candidate addresses...")
+            
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(model="gpt-4o-mini")
+            
+            ranking_prompt = f"""Rank these addresses by how likely they are to be the correct address for "{poi_name}" in {city}.
+
+Business: {poi_name}
+City: {city}, {province}, {country}
+
+Candidate addresses:
+{chr(10).join([f"{i+1}. {addr}" for i, addr in enumerate(candidate_addresses)])}
+
+Return ONLY the number of the best address, or "NONE" if none seem correct.
+
+Consider:
+- Addresses that include the business name are more likely correct
+- Addresses in {city} are more likely than other cities
+- More complete addresses (with street type) are better
+- Avoid generic addresses that could be anywhere
+
+Example: If address #3 seems best, return "3"
+Example: If none seem right, return "NONE"
+"""
+            
+            ranking_response = llm.invoke([
+                SystemMessage(content="You are an address ranking specialist. Return only a number (1, 2, 3, etc.) or 'NONE' if none seem correct."),
+                HumanMessage(content=ranking_prompt)
+            ])
+            
+            try:
+                response_text = ranking_response.content.strip()
+                print(f"    🤖 LLM response: '{response_text}'")
+                
+                if response_text.upper() == "NONE":
+                    print("❌ LLM said none of the addresses seem correct")
+                else:
+                    best_index = int(response_text) - 1
+                    if 0 <= best_index < len(candidate_addresses):
+                        best_address = candidate_addresses[best_index]
+                        print(f"✅ LLM selected best address: {best_address}")
+                        
+                        # Try to geocode this address
+                        coords = geocode_address(best_address, city, province, country)
+                        if coords:
+                            return coords
+                    else:
+                        print(f"❌ LLM selected invalid address index: {best_index}")
+            except ValueError as e:
+                print(f"❌ LLM returned invalid response: '{ranking_response.content.strip()}' - {e}")
+        else:
+            print("❌ No candidate addresses found from site searches")
+            
     except Exception as e:
-        print(f"❌ Serper geocoding error: {e}")
+        print(f"❌ Site-specific search error: {e}")
     
-    # Method 2: Try OpenStreetMap Nominatim (fallback)
+    # Step 4: Fallback to Google Places with business name (like Google Earth)
     try:
-        print(f"🗺️ Trying OpenStreetMap for {poi_name}...")
+        print(f"🔍 STEP 4: Trying Google Places API with business name...")
+        google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+        if google_api_key:
+            # Try multiple search strategies like Google Earth does
+            search_strategies = [
+                f'"{poi_name}" {city}',  # Exact business name + city
+                f'{poi_name} restaurant {city}',  # Add category context
+                f'{poi_name} {city} address',  # Explicitly ask for address
+                f'{poi_name} {city} location'  # Ask for location
+            ]
+            
+            for i, search_input in enumerate(search_strategies):
+                print(f"  🔎 Google Places search {i+1}: {search_input}")
+                
+                url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+                params = {
+                    "input": search_input,
+                    "inputtype": "textquery",
+                    "fields": "geometry/location,formatted_address,name,types,place_id",
+                    "key": google_api_key
+                }
+                
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                result = response.json()
+                
+                print(f"    📊 Google Places response status: {result.get('status')}")
+                
+                if result.get("status") == "OK" and result.get("candidates"):
+                    candidate = result["candidates"][0]
+                    location = candidate["geometry"]["location"]
+                    lat = location["lat"]
+                    lng = location["lng"]
+                    formatted_address = candidate.get("formatted_address", "N/A")
+                    place_name = candidate.get("name", "N/A")
+                    place_types = candidate.get("types", [])
+                    place_id = candidate.get("place_id", "N/A")
+                    
+                    print(f"    📍 Google Places found: {place_name}")
+                    print(f"    📍 Address: {formatted_address}")
+                    print(f"    📍 Types: {place_types}")
+                    print(f"    📍 Place ID: {place_id}")
+                    print(f"    📍 Coordinates: ({lat}, {lng})")
+                    
+                    # Check if this looks like the right business (like Google Earth does)
+                    is_likely_correct = (
+                        poi_name.lower() in place_name.lower() or 
+                        place_name.lower() in poi_name.lower() or
+                        any(business_type in place_types for business_type in ['restaurant', 'food', 'store', 'establishment'])
+                    )
+                    
+                    if is_likely_correct:
+                        if is_coordinates_in_city(lat, lng, city):
+                            print(f"✅ Google Places found correct business within city bounds: ({lat}, {lng})")
+                            return {"lat": lat, "lng": lng}
+                        else:
+                            print(f"⚠️ Google Places found correct business but outside city bounds: ({lat}, {lng})")
+                            # Still return it if it's the right business, just warn
+                            print(f"✅ Returning coordinates anyway since business name matches: ({lat}, {lng})")
+                            return {"lat": lat, "lng": lng}
+                    else:
+                        print(f"⚠️ Google Places found different business: {place_name}")
+                        continue  # Try next search strategy
+                else:
+                    print(f"❌ Google Places search {i+1} failed: {result.get('status')} - {result.get('error_message', 'No error message')}")
+                    continue  # Try next search strategy
+            
+            print("❌ All Google Places search strategies failed")
+        else:
+            print("⚠️ GOOGLE_PLACES_API_KEY not found, skipping Google Places")
+            
+    except Exception as e:
+        print(f"❌ Google Places geocoding error: {e}")
+    
+    # Step 5: Final fallback to OpenStreetMap
+    try:
+        print(f"🔍 STEP 5: Trying OpenStreetMap (Nominatim)...")
         search_query = f"{poi_name}, {city}, {province}, {country}"
+        print(f"  🔎 OpenStreetMap search: {search_query}")
+        
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": search_query,
+            "format": "json",
+            "limit": 3,
+            "addressdetails": 1
+        }
+        headers = {"User-Agent": "AroundMeAgent/1.0"}
+        
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        results = response.json()
+        
+        print(f"    📊 OpenStreetMap returned {len(results)} results")
+        
+        if results and len(results) > 0:
+            for i, result in enumerate(results):
+                lat = float(result["lat"])
+                lon = float(result["lon"])
+                display_name = result.get("display_name", "N/A")
+                result_type = result.get("type", "N/A")
+                
+                print(f"    📍 Result {i+1}: {display_name}")
+                print(f"    📍 Type: {result_type}")
+                print(f"    📍 Coordinates: ({lat}, {lon})")
+                
+                if is_coordinates_in_city(lat, lon, city):
+                    print(f"✅ OpenStreetMap result {i+1} within city bounds: ({lat}, {lon})")
+                    return {"lat": lat, "lng": lon}
+                else:
+                    print(f"⚠️ OpenStreetMap result {i+1} outside city bounds: ({lat}, {lon})")
+            
+            print("❌ All OpenStreetMap results were outside city bounds")
+        else:
+            print("❌ OpenStreetMap returned no results")
+            
+    except Exception as e:
+        print(f"❌ OpenStreetMap geocoding error: {e}")
+    
+    print(f"❌ ===== ALL GEOCODING METHODS FAILED FOR: {poi_name} =====")
+    return None
+
+def geocode_address(address: str, city: str, province: str, country: str) -> Optional[Dict[str, float]]:
+    """Helper function to geocode a specific address"""
+    print(f"    🗺️ Geocoding address: {address}")
+    
+    # Try Google Places first
+    try:
+        google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+        if google_api_key:
+            search_input = f"{address}, {city}"
+            
+            url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+            params = {
+                "input": search_input,
+                "inputtype": "textquery",
+                "fields": "geometry/location",
+                "key": google_api_key
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get("status") == "OK" and result.get("candidates"):
+                location = result["candidates"][0]["geometry"]["location"]
+                lat = location["lat"]
+                lng = location["lng"]
+                
+                if is_coordinates_in_city(lat, lng, city):
+                    print(f"    ✅ Google Places geocoded: ({lat}, {lng})")
+                    return {"lat": lat, "lng": lng}
+                else:
+                    print(f"    ⚠️ Google Places coordinates outside city bounds: ({lat}, {lng})")
+    except Exception as e:
+        print(f"    ❌ Google Places geocoding error: {e}")
+    
+    # Try OpenStreetMap
+    try:
+        search_query = f"{address}, {city}, {province}, {country}"
+        
         url = "https://nominatim.openstreetmap.org/search"
         params = {
             "q": search_query,
@@ -127,80 +365,12 @@ If coordinates are for general city area, return 0.0, 0.0"""),
             lat = float(result["lat"])
             lon = float(result["lon"])
             
-            # Check if coordinates are within reasonable bounds for the city
             if is_coordinates_in_city(lat, lon, city):
-                print(f"✅ OpenStreetMap found coordinates: ({lat}, {lon})")
+                print(f"    ✅ OpenStreetMap geocoded: ({lat}, {lon})")
                 return {"lat": lat, "lng": lon}
             else:
-                print(f"⚠️ OpenStreetMap coordinates outside city bounds: ({lat}, {lon})")
-        else:
-            print("❌ OpenStreetMap returned no results")
-            
+                print(f"    ⚠️ OpenStreetMap coordinates outside city bounds: ({lat}, {lon})")
     except Exception as e:
-        print(f"❌ OpenStreetMap geocoding error: {e}")
+        print(f"    ❌ OpenStreetMap geocoding error: {e}")
     
-    # Method 2: Try Google Places API (if API key is available)
-    try:
-        google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
-        if google_api_key:
-            url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
-            params = {
-                "input": f"{poi_name} {city}",
-                "inputtype": "textquery",
-                "fields": "geometry/location",
-                "key": google_api_key
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-            
-            if result.get("status") == "OK" and result.get("candidates"):
-                location = result["candidates"][0]["geometry"]["location"]
-                lat = location["lat"]
-                lng = location["lng"]
-                
-                if is_coordinates_in_city(lat, lng, city):
-                    print(f"✅ Google Places found coordinates: ({lat}, {lng})")
-                    return {"lat": lat, "lng": lng}
-                else:
-                    print(f"⚠️ Google Places coordinates outside city bounds: ({lat}, {lng})")
-            else:
-                print(f"❌ Google Places error: {result.get('status')}")
-        else:
-            print("⚠️ GOOGLE_PLACES_API_KEY not found, skipping Google Places")
-            
-    except Exception as e:
-        print(f"❌ Google Places geocoding error: {e}")
-    
-    # Method 3: Try Geopy (if installed)
-    try:
-        from geopy.geocoders import Nominatim
-        from geopy.exc import GeocoderTimedOut, GeocoderUnavailable
-        
-        geolocator = Nominatim(user_agent="AroundMeAgent/1.0")
-        search_query = f"{poi_name}, {city}, {province}, {country}"
-        
-        location = geolocator.geocode(search_query, timeout=10)
-        
-        if location:
-            lat = location.latitude
-            lon = location.longitude
-            
-            if is_coordinates_in_city(lat, lon, city):
-                print(f"✅ Geopy found coordinates: ({lat}, {lon})")
-                return {"lat": lat, "lng": lon}
-            else:
-                print(f"⚠️ Geopy coordinates outside city bounds: ({lat}, {lon})")
-        else:
-            print("❌ Geopy returned no results")
-            
-    except ImportError:
-        print("⚠️ Geopy not installed, skipping Geopy geocoding")
-    except (GeocoderTimedOut, GeocoderUnavailable) as e:
-        print(f"❌ Geopy geocoding error: {e}")
-    except Exception as e:
-        print(f"❌ Geopy unexpected error: {e}")
-    
-    print(f"❌ All geocoding methods failed for {poi_name}")
     return None
