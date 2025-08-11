@@ -5,7 +5,7 @@ import re
 from typing import List
 from bs4 import BeautifulSoup
 
-def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
+def extract_reddit_post_urls_from_text(text_content: str, target_subreddit: str = None) -> List[str]:
     """Extract Reddit post URLs from plain text content using regex patterns"""
     try:
         post_urls = []
@@ -39,7 +39,8 @@ def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
                     elif 'comments/' in match:
                         # This is a post ID, construct the URL - use dynamic subreddit
                         # We'll need to get the subreddit from context or use a generic approach
-                        full_url = f"https://old.reddit.com/r/askTO/comments/{match}"
+                        # For now, skip these as we can't determine the correct subreddit
+                        continue
                     else:
                         full_url = f"https://old.reddit.com{match}"
                     
@@ -47,7 +48,11 @@ def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
                     full_url = full_url.split('?')[0]  # Remove query parameters
                     full_url = full_url.rstrip('/')  # Remove trailing slash
                     
-                    if full_url not in post_urls and '/comments/' in full_url:
+                    # Filter by subreddit if specified
+                    if target_subreddit:
+                        if f"/r/{target_subreddit}/comments/" in full_url and full_url not in post_urls:
+                            post_urls.append(full_url)
+                    elif full_url not in post_urls and '/comments/' in full_url:
                         post_urls.append(full_url)
         
         return list(set(post_urls))  # Remove duplicates
@@ -56,7 +61,7 @@ def extract_reddit_post_urls_from_text(text_content: str) -> List[str]:
         print(f"Error extracting Reddit URLs from text: {e}")
         return []
 
-async def extract_reddit_post_urls_from_playwright(page) -> List[str]:
+async def extract_reddit_post_urls_from_playwright(page, target_subreddit: str = None) -> List[str]:
     """Extract Reddit post URLs using direct Playwright methods (WORKING METHOD)"""
     try:
         post_urls = []
@@ -79,8 +84,14 @@ async def extract_reddit_post_urls_from_playwright(page) -> List[str]:
                     # Clean up the URL
                     full_url = full_url.split('?')[0].rstrip('/')
                     
-                    if full_url not in post_urls:
-                        post_urls.append(full_url)
+                    # Filter by subreddit if specified
+                    if target_subreddit:
+                        if f"/r/{target_subreddit}/comments/" in full_url:
+                            if full_url not in post_urls:
+                                post_urls.append(full_url)
+                    else:
+                        if full_url not in post_urls:
+                            post_urls.append(full_url)
             except Exception as e:
                 continue
         

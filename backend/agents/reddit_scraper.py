@@ -389,72 +389,29 @@ If coordinates are for general city area, return 0.0, 0.0"""),
                 if coords:
 
                     
-                    # Create summary using ONLY the actual Reddit content - NO FAKE QUOTES
-                    system_message = f"""Create a brief, factual summary for {poi.name} based ONLY on the Reddit content provided.
-
-CRITICAL RULES:
-1. Use ONLY information that is explicitly stated in the Reddit content
-2. DO NOT create fake quotes or put words in users' mouths
-3. DO NOT use quotation marks unless they appear in the original content
-4. Keep it under 200 characters
-5. Start with a simple factual statement like:
-   - "Mentioned in r/{subreddit} discussions"
-   - "Reddit users discuss this {poi.category.lower()}"
-   - "Featured in r/{subreddit} recommendations"
-6. Only mention specific details that are actually in the content
-7. If the content is vague, keep the summary general and factual
-
-DO NOT:
-- Create fake user quotes
-- Add opinions not in the original content
-- Use quotation marks for made-up quotes
-- Exaggerate or embellish the content"""
-                    
-                    user_message = f"""Place: {poi.name}
-Category: {poi.category}
-Subreddit: r/{subreddit}
-City: {city}
-
-ORIGINAL REDDIT CONTENT ABOUT THIS PLACE:
-{poi.reddit_context}
-
-Create a brief, factual summary using ONLY the Reddit content above."""
-                    
+                    # Create summary using direct Reddit context - NO LLM
                     try:
-                        print(f"🤖 Generating summary for {poi.name}...")
-                        summary_messages = [
-                            SystemMessage(content=system_message),
-                            HumanMessage(content=user_message)
-                        ]
+                        print(f"📝 Creating summary for {poi.name} from Reddit context...")
                         
-                        summary_response = llm.invoke(summary_messages)
-                        print(f"✅ LLM response received for {poi.name}")
-                        
-                        if not summary_response or not summary_response.content:
-                            print(f"❌ Empty LLM response for {poi.name}")
-                            summary = f"Mentioned in r/{subreddit} discussions"
-                        else:
-                            summary = summary_response.content.strip()[:400]  # Increased length limit
-                        
-                        # Simple validation and cleanup
-                        summary = summary.strip()
-                        
-                        # Remove any fake quotes that don't exist in original content
-                        if '"' in summary:
-                            # Check if quotes are actually in the original content
-                            quotes_in_summary = re.findall(r'"([^"]+)"', summary)
-                            quotes_in_content = re.findall(r'"([^"]+)"', poi.reddit_context)
+                        # Use the reddit_context directly as the summary
+                        if hasattr(poi, 'reddit_context') and poi.reddit_context:
+                            # Clean up the context for use as summary
+                            context = poi.reddit_context.strip()
                             
-                            # If quotes in summary aren't in original content, remove them
-                            for quote in quotes_in_summary:
-                                if quote not in quotes_in_content:
-                                    summary = summary.replace(f'"{quote}"', quote)
+                            # Remove any Reddit-specific formatting
+                            context = re.sub(r'\[.*?\]', '', context)  # Remove [text] links
+                            context = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', context)  # Remove URLs
+                            
+                            # Keep it under 200 characters
+                            if len(context) > 200:
+                                context = context[:197] + "..."
+                            
+                            summary = context
+                        else:
+                            # Fallback if no context
+                            summary = f"Popular {poi.category.lower()} mentioned in r/{subreddit} discussions"
                         
-                        # Keep it under 200 characters
-                        if len(summary) > 200:
-                            summary = summary[:197] + "..."
-                        
-                        print(f"📝 Generated summary for {poi.name}: {summary[:100]}...")
+                        print(f"📝 Created summary for {poi.name}: {summary[:100]}...")
                         
                         # Create POI
                         poi_output = POIOutput(
@@ -471,16 +428,13 @@ Create a brief, factual summary using ONLY the Reddit content above."""
                         
                     except Exception as e:
                         print(f"❌ Error creating POI summary for {poi.name}: {e}")
-                        import traceback
-                        traceback.print_exc()
                         
-                        # Fallback summary using the original Reddit context
-                        reddit_context = poi.reddit_context[:250] if poi.reddit_context else f"Popular {poi.category.lower()} mentioned by r/{subreddit} users"
+                        # Fallback summary
                         poi_output = POIOutput(
                             name=poi.name,
                             lat=coords['lat'],
                             lng=coords['lng'],
-                            summary=f"Reddit users say: {reddit_context}",
+                            summary=f"Popular {poi.category.lower()} in {city}",
                             type="reddit", 
                             radius=20
                         )
@@ -878,53 +832,80 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
         extract_messages = [
             SystemMessage(content=f"""You are analyzing Reddit content to find COOL PLACES that people recommend visiting.
 
-GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting.
+GOAL: Find ALL the interesting, fun, and cool places that Reddit users recommend visiting.
 
-IMPORTANT: Extract ALL places that are mentioned positively in the provided Reddit content, especially places that people recommend or say are cool/fun.
-Be thorough and comprehensive - look for any place names, businesses, attractions, neighborhoods, etc. that people talk about positively.
+CRITICAL: Be EXTREMELY AGGRESSIVE and THOROUGH in your extraction. Look for ANY place name, business, attraction, neighborhood, or location that people mention positively, recommend, or talk about favorably.
 
-Extract ALL COOL PLACES mentioned in this content, including:
-- Restaurants, cafes, bars, food spots that people recommend
-- Museums, galleries, cultural venues that people say are interesting
-- Parks, trails, outdoor spaces that people recommend
-- Shopping centers, markets, boutiques that people mention positively
-- Entertainment venues, theaters, cinemas that people recommend
-- Tourist attractions, landmarks that people say are worth visiting
-- Local businesses and services that people recommend
-- Neighborhoods, districts, areas that people mention positively
-- Any specific place names with locations that people talk about positively
+MOST IMPORTANT: For each place you extract, you MUST include the FULL CONTEXT from the Reddit discussion. This means:
+- Include the complete sentence or paragraph that mentions the place
+- Include what people specifically say about it (reviews, recommendations, experiences)
+- Include any details about food, atmosphere, location, prices, etc.
+- Include the surrounding context that explains WHY it's worth visiting
+- Don't just extract the place name - extract the full story around it
+- DO NOT generate or create any text - only use the exact words from the Reddit discussion
+- The reddit_context field should contain the actual Reddit user's words, not your interpretation
+- CRITICAL: If you can't find enough context for a place, skip it rather than making up descriptions
+- Only extract places where you can find genuine Reddit user comments about them
+
+Extract EVERY SINGLE PLACE mentioned in this content, including:
+- Restaurants, cafes, bars, food spots, eateries, diners, food trucks
+- Museums, galleries, cultural venues, theaters, cinemas, concert halls
+- Parks, trails, outdoor spaces, gardens, beaches, hiking spots
+- Shopping centers, markets, boutiques, malls, stores, shops
+- Entertainment venues, clubs, pubs, lounges, arcades, game rooms
+- Tourist attractions, landmarks, monuments, buildings, towers
+- Local businesses, services, spas, salons, gyms, fitness centers
+- Neighborhoods, districts, areas, zones, quarters, villages
+- Streets, avenues, roads, intersections that people mention as destinations
+- Any specific place names, business names, or locations that people talk about positively
+
+BE EXTREMELY LIBERAL - if someone mentions a place name in a positive context, extract it. Don't be conservative. Extract as many places as possible.
 
 For each place, provide:
 1. The exact name as mentioned
 2. A brief description based on what's said about it
 3. The category
-4. The specific Reddit context where it's mentioned
+4. The specific Reddit context where it's mentioned (the actual text that mentions this place) - THIS MUST BE THE FULL CONTEXT, NOT JUST THE PLACE NAME
 
-Be comprehensive - extract as many cool places as you can find mentioned in the content."""),
+Extract AT LEAST 15-20 places if possible. Be comprehensive and thorough."""),
             HumanMessage(content=f"""Find ALL COOL PLACES that people recommend visiting.
 
 Here is the Reddit content to analyze:
 
 {content[:12000]}
 
-Extract ALL COOL PLACES mentioned in this content, including:
-- Restaurants, cafes, bars, food spots that people recommend
-- Museums, galleries, cultural venues that people say are interesting
-- Parks, trails, outdoor spaces that people recommend
-- Shopping centers, markets, boutiques that people mention positively
-- Entertainment venues, theaters, cinemas that people recommend
-- Tourist attractions, landmarks that people say are worth visiting
-- Local businesses and services that people recommend
-- Neighborhoods, districts, areas that people mention positively
-- Any specific place names with locations that people talk about positively
+IMPORTANT: For each place you find, make sure to capture the FULL CONTEXT from the Reddit discussion. Include:
+- What people specifically say about the place
+- Their experiences, recommendations, or reviews
+- Details about food, atmosphere, location, prices, etc.
+- The surrounding sentences that explain why it's worth visiting
+- Don't just extract the place name - get the full story
+- CRITICAL: Only use the exact words from Reddit users - do not generate or create any text
+- The reddit_context must be authentic Reddit content, not AI-generated descriptions
+- IMPORTANT: Skip any place where you can't find genuine Reddit user comments about it
+- Quality over quantity - better to have fewer authentic POIs than more fake ones
+
+Extract EVERY SINGLE PLACE mentioned in this content, including:
+- Restaurants, cafes, bars, food spots, eateries, diners, food trucks
+- Museums, galleries, cultural venues, theaters, cinemas, concert halls
+- Parks, trails, outdoor spaces, gardens, beaches, hiking spots
+- Shopping centers, markets, boutiques, malls, stores, shops
+- Entertainment venues, clubs, pubs, lounges, arcades, game rooms
+- Tourist attractions, landmarks, monuments, buildings, towers
+- Local businesses, services, spas, salons, gyms, fitness centers
+- Neighborhoods, districts, areas, zones, quarters, villages
+- Streets, avenues, roads, intersections that people mention as destinations
+- Any specific place names, business names, or locations that people talk about positively
+
+BE EXTREMELY LIBERAL - if someone mentions a place name in a positive context, extract it. Don't be conservative. Extract as many places as possible.
 
 For each place, provide:
 1. The exact name as mentioned
 2. A brief description based on what's said about it
 3. The category
-4. The specific Reddit context where it's mentioned
+4. The specific Reddit context where it's mentioned (the actual text that mentions this place) - INCLUDE THE FULL CONTEXT
 
-Be comprehensive - extract as many cool places as you can find mentioned in the content.""")
+Extract AT LEAST 15-20 places if possible. Be comprehensive and thorough.""")
         ]
         
         pois_response = await llm_with_structured_output.ainvoke(extract_messages)
@@ -972,12 +953,34 @@ Be comprehensive - extract as many cool places as you can find mentioned in the 
         print(f"🔍 Regex found {len(found_places)} additional potential places")
         
         # If LLM found very few POIs, use regex results as backup
-        if len(pois) < 10 and found_places:
+        if len(pois) < 5 and found_places:
             print(f"⚠️ LLM only found {len(pois)} POIs, using regex results as backup...")
             # Convert regex results to POI format
             for place_name in list(found_places)[:20]:  # Limit to 20 to avoid spam
                 # Check if this place is already in LLM results
                 if not any(poi.name.lower() == place_name.lower() for poi in pois):
+                    # Filter out obviously non-place names (but be more conservative)
+                    non_place_words = [
+                        'hello', 'picture', 'discussion', 'filter', 'megathread', 'user', 'agreement', 
+                        'alerts', 'monthly', 'meetup', 'traditionally', 'pictures', 'rules', 'this', 'all', 
+                        'show', 'hide', 'sort', 'best', 'top', 'new', 'old', 'controversial', 'q&a', 'more', 
+                        'less', 'points', 'children', 'permalink', 'embed', 'save', 'parent', 'report', 
+                        'track', 'reply', 'share', 'replies', 'open', 'comment', 'options', 'submit', 
+                        'edit', 'delete', 'moderators', 'guidelines'
+                    ]
+                    
+                    # Skip if it contains non-place words
+                    if any(word in place_name.lower() for word in non_place_words):
+                        continue
+                        
+                    # Skip if it's too generic
+                    if len(place_name.split()) == 1 and place_name.lower() in ['street', 'park', 'road', 'avenue', 'drive', 'lane', 'place', 'court', 'terrace', 'crescent']:
+                        continue
+                        
+                    # Skip if it's just common words
+                    if place_name.lower() in ['hello', 'picture', 'discussion', 'filter', 'megathread', 'cheap', 'user', 'agreement', 'alerts', 'monthly', 'meetup', 'traditionally', 'pictures', 'rules', 'street', 'park', 'gems', 'march', 'january', 'december', 'former', 'new', 'york', 'greenwich', 'village', 'sunset', 'playoff', 'hockey', 'this', 'all', 'show', 'hide', 'sort', 'best', 'top', 'new', 'old', 'controversial', 'q&a', 'more', 'less', 'points', 'children', 'permalink', 'embed', 'save', 'parent', 'report', 'track', 'reply', 'share', 'replies', 'open', 'comment', 'options', 'submit', 'edit', 'delete', 'moderators', 'guidelines']:
+                        continue
+                    
                     # Create a simple POI from regex result
                     from reddit.models import POI
                     regex_poi = POI(
@@ -998,65 +1001,97 @@ Be comprehensive - extract as many cool places as you can find mentioned in the 
         }
 
     async def create_descriptions_node(state: RedditState) -> RedditState:
-        """Create authentic descriptions by quoting Reddit users"""
-        print("✍️ Creating authentic descriptions by quoting Reddit users...")
+        """Create descriptions using the actual reddit_context found during POI extraction"""
+        print("✍️ Creating descriptions from actual Reddit context...")
         
         pois = state.get("extracted_pois", [])
         if not pois:
             print("❌ No POIs to create descriptions for")
             return {**state, "extracted_pois": [], "current_step": "end"}
         
-        # Create a new POI model for enhanced descriptions
-                # Models are now imported from reddit.models
+        print(f"🔍 Creating descriptions for {len(pois)} POIs using their reddit_context...")
         
-        llm_with_enhanced_output = llm.with_structured_output(EnhancedPOIList)
+        # Process each POI to create a sensible description
+        for poi in pois:
+            try:
+                place_name = poi.name
+                
+                # Use the reddit_context that was already found during POI extraction
+                if hasattr(poi, 'reddit_context') and poi.reddit_context:
+                    import re
+                    
+                    # Clean up the context
+                    context = poi.reddit_context.strip()
+                    context = re.sub(r'\[.*?\]', '', context)  # Remove [text] links
+                    context = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', context)  # Remove URLs
+                    
+                    # Split into sentences and find the most relevant one
+                    sentences = re.split(r'[.!?]+', context)
+                    best_sentence = None
+                    
+                    # Look for sentences that actually describe the place
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if len(sentence) < 15 or len(sentence) > 150:
+                            continue
+                            
+                        # Skip Reddit UI text
+                        ui_words = ['permalink', 'embed', 'save', 'parent', 'report', 'track', 'reply', 'share', 'more', 'replies', 'sort', 'best', 'top', 'new', 'controversial', 'old', 'q&a', 'open', 'comment', 'options', 'filter', 'show', 'hide', 'submit', 'edit', 'delete', 'moderators', 'rules', 'guidelines']
+                        if any(word in sentence.lower() for word in ui_words):
+                            continue
+                            
+                        # Look for descriptive words
+                        descriptive_words = ['restaurant', 'cafe', 'bar', 'pub', 'park', 'museum', 'gallery', 'theater', 'cinema', 'shop', 'store', 'market', 'mall', 'attraction', 'landmark', 'venue', 'place', 'spot', 'area', 'neighborhood', 'district', 'pizza', 'food', 'drink', 'eat', 'visit', 'go', 'check out', 'try', 'recommend', 'suggest', 'good', 'great', 'amazing', 'awesome', 'excellent', 'fantastic', 'wonderful', 'best', 'love', 'like', 'worth', 'nice', 'cool', 'interesting', 'popular', 'famous', 'known for', 'favorite', 'must see', 'must visit']
+                        
+                        if any(word in sentence.lower() for word in descriptive_words):
+                            best_sentence = sentence
+                            break
+                    
+                    # If no descriptive sentence found, use the first reasonable one
+                    if not best_sentence:
+                        for sentence in sentences:
+                            sentence = sentence.strip()
+                            if len(sentence) > 15 and len(sentence) < 100:
+                                # Skip if it's just the place name repeated
+                                if sentence.lower() != place_name.lower():
+                                    best_sentence = sentence
+                                    break
+                    
+                    # Use the best sentence or truncate the context
+                    if best_sentence:
+                        # Don't truncate - use the full sentence for authenticity
+                        poi.description = best_sentence
+                        print(f"✅ Created description for {place_name}: {best_sentence[:80]}...")
+                    else:
+                        # Use more context but don't truncate too aggressively
+                        if len(context) > 200:
+                            context = context[:200] + "..."
+                        poi.description = context
+                        print(f"✅ Used context for {place_name}: {context[:80]}...")
+                
+                # Ensure authenticity - only use real Reddit content
+                if hasattr(poi, 'reddit_context') and poi.reddit_context:
+                    # Double-check that we're not using any generated text
+                    if len(poi.description) < 10 or poi.description.lower() in [
+                        "popular restaurant", "popular cafe", "popular bar", "popular attraction",
+                        "mentioned in discussions", "popular spot", "well-known place"
+                    ]:
+                        # If description is too generic, use the actual Reddit context
+                        poi.description = poi.reddit_context[:200] if len(poi.reddit_context) > 200 else poi.reddit_context
+                else:
+                    # Fallback for POIs without context
+                    poi.description = f"Popular {poi.category.lower()} mentioned in r/{state['subreddit']} discussions"
+                    print(f"⚠️ No context for {place_name}, using fallback")
+                    
+            except Exception as e:
+                print(f"❌ Error processing {poi.name}: {e}")
+                poi.description = f"Popular {poi.category.lower()} in {state['city']}"
         
-        # Create factual descriptions based ONLY on actual Reddit content
-        description_messages = [
-            SystemMessage(content=f"""Create brief, factual descriptions for places in {state['city']} based ONLY on the Reddit content provided.
-
-CRITICAL RULES:
-1. Use ONLY information explicitly stated in the Reddit content
-2. DO NOT create fake quotes or put words in users' mouths
-3. DO NOT use quotation marks unless they appear in the original content
-4. Keep descriptions under 100 words
-5. Start with factual statements like:
-   - "Mentioned in r/{state['subreddit']} discussions"
-   - "Reddit users discuss this place"
-   - "Featured in community recommendations"
-6. Only mention specific details that are actually in the content
-7. If content is vague, keep description general and factual
-
-DO NOT:
-- Create fake user quotes
-- Add opinions not in the original content
-- Use quotation marks for made-up quotes
-- Exaggerate or embellish the content"""),
-            HumanMessage(content=f"""Create factual descriptions for these places in {state['city']} based ONLY on the Reddit content:
-
-{chr(10).join([f"• {poi.name} ({poi.category}): {poi.reddit_context[:300]}..." for poi in pois])}
-
-Create brief, factual descriptions (max 100 words each) that accurately reflect what's in the Reddit content without adding fake quotes.""")
-        ]
-        
-        enhanced_response = await llm_with_enhanced_output.ainvoke(description_messages)
-        enhanced_pois = enhanced_response.pois
-        
-        print(f"✅ Created authentic descriptions for {len(enhanced_pois)} POIs")
-        
-        # Convert back to original POI format but with enhanced descriptions
-        final_pois = []
-        for enhanced_poi in enhanced_pois:
-            # Find the original POI to preserve other fields
-            original_poi = next((p for p in pois if p.name == enhanced_poi.name), None)
-            if original_poi:
-                # Update the description with the user quote
-                original_poi.description = enhanced_poi.user_quote
-                final_pois.append(original_poi)
+        print(f"✅ Created descriptions for {len(pois)} POIs using actual Reddit context")
         
         return {
             **state,
-            "extracted_pois": final_pois,
+            "extracted_pois": pois,
             "current_step": "end"
         }
     

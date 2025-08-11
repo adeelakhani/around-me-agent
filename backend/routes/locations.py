@@ -34,8 +34,9 @@ async def get_locations(
     # Get News POIs using the new service structure
     print(f"🗞️ Fetching news for {city}, {province}, {country}")
     try:
-        news_pois = get_news_pois(city, province, country, user_lat, user_lon)
-        print(f"✅ Found {len(news_pois)} news POIs")
+        # news_pois = get_news_pois(city, province, country, user_lat, user_lon)  # TEMPORARILY DISABLED (API token limit)
+        news_pois = []  # Empty list for now
+        print(f"✅ News API temporarily disabled (API token limit)")
         all_pois.extend(news_pois)  # Add news POIs to the list
     except Exception as e:
         print(f"❌ Error fetching news: {e}")
