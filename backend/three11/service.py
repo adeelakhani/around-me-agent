@@ -166,7 +166,7 @@ def is_valid_coordinates_for_city(lat: float, lng: float, city: str, province: s
     # For unknown cities, use a very broad range
     return -90 <= lat <= 90 and -180 <= lng <= 180
 
-def get_311_pois(city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def get_311_pois(city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     print(f"Starting 311 API for coordinates: {user_lat}, {user_lon} in {city}, {province}, {country}")
     
     timestamp = int(time.time())
@@ -180,7 +180,7 @@ def get_311_pois(city: str, province: str, country: str, user_lat: float, user_l
     try:
         pois = []
         
-        city_pois = fetch_city_311_data(city, province, country, user_lat, user_lon)
+        city_pois = fetch_city_311_data(city, province, country, user_lat, user_lon, max_pois)
         pois.extend(city_pois)
         
         if pois:
@@ -201,14 +201,14 @@ def get_311_pois(city: str, province: str, country: str, user_lat: float, user_l
         traceback.print_exc()
         return []
 
-def fetch_city_311_data(city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def fetch_city_311_data(city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     print(f"Fetching 311 data for {city}, {province}, {country}")
     
     try:
         api_endpoint = discover_municipal_api_endpoint(city, province, country)
         
         if api_endpoint:
-            return fetch_from_api_endpoint(api_endpoint, city, province, country, user_lat, user_lon)
+            return fetch_from_api_endpoint(api_endpoint, city, province, country, user_lat, user_lon, max_pois)
         else:
             print(f"No 311 API found for {city}, {province}, {country}")
             return []
@@ -219,7 +219,7 @@ def fetch_city_311_data(city: str, province: str, country: str, user_lat: float,
 
 
 
-def fetch_from_api_endpoint(endpoint: str, city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def fetch_from_api_endpoint(endpoint: str, city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     print(f"Fetching from API endpoint: {endpoint}")
     
     # Handle mock endpoints
@@ -234,16 +234,16 @@ def fetch_from_api_endpoint(endpoint: str, city: str, province: str, country: st
         # Check if it's a ZIP file
         if endpoint.endswith('.zip') or 'application/zip' in response.headers.get('Content-Type', ''):
             print("Detected ZIP file, extracting CSV data...")
-            return extract_zip_data(response.content, city, province, country, user_lat, user_lon)
+            return extract_zip_data(response.content, city, province, country, user_lat, user_lon, max_pois)
         
         # Try to parse as JSON
         try:
             data = response.json()
-            return parse_json_311_data(data, city, province, country, user_lat, user_lon)
+            return parse_json_311_data(data, city, province, country, user_lat, user_lon, max_pois)
         except:
             # If not JSON, try to parse as CSV
             print("Trying to parse as CSV...")
-            return parse_csv_311_data(response.text, city, province, country, user_lat, user_lon)
+            return parse_csv_311_data(response.text, city, province, country, user_lat, user_lon, max_pois)
         
     except Exception as e:
         print(f"Error fetching from API endpoint: {e}")
@@ -251,7 +251,7 @@ def fetch_from_api_endpoint(endpoint: str, city: str, province: str, country: st
         print("API failed, no 311 data available")
         return []
 
-def extract_zip_data(zip_content: bytes, city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def extract_zip_data(zip_content: bytes, city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     """Extract CSV data from ZIP file."""
     try:
         with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_file:
@@ -285,20 +285,20 @@ def extract_zip_data(zip_content: bytes, city: str, province: str, country: str,
                     print("Failed to decode CSV with any encoding")
                     return []
                 
-                return parse_csv_311_data(csv_content, city, province, country, user_lat, user_lon)
+                return parse_csv_311_data(csv_content, city, province, country, user_lat, user_lon, max_pois)
                 
     except Exception as e:
         print(f"Error extracting ZIP data: {e}")
         return []
 
-def parse_csv_311_data(csv_content: str, city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def parse_csv_311_data(csv_content: str, city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     """Parse CSV data from 311 service requests."""
     try:
         csv_reader = csv.DictReader(io.StringIO(csv_content))
         pois = []
         
         for i, row in enumerate(csv_reader):
-            if i >= 25:  # Limit to 25 POIs
+            if i >= max_pois:  # Limit to max_pois POIs
                 break
                 
             # Extract location data - try different possible column names
@@ -406,13 +406,13 @@ def parse_csv_311_data(csv_content: str, city: str, province: str, country: str,
         print(f"Error parsing CSV data: {e}")
         return []
 
-def parse_json_311_data(data: Any, city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+def parse_json_311_data(data: Any, city: str, province: str, country: str, user_lat: float, user_lon: float, max_pois: int = 25) -> List[Dict[str, Any]]:
     """Parse JSON data from 311 service requests."""
     pois = []
     
     if isinstance(data, dict):
         if "service_requests" in data:
-            for request in data["service_requests"][:25]:
+            for request in data["service_requests"][:max_pois]:
                 if "lat" in request and "long" in request:
                     poi = {
                         "name": request.get("service_name", f"{city} Service Request"),
@@ -425,7 +425,7 @@ def parse_json_311_data(data: Any, city: str, province: str, country: str, user_
                     }
                     pois.append(poi)
         elif "service_definitions" in data:
-            for service in data["service_definitions"][:25]:
+            for service in data["service_definitions"][:max_pois]:
                 poi = {
                     "name": service.get("service_name", f"{city} Service"),
                     "lat": user_lat + (0.001 * len(pois)),
@@ -437,7 +437,7 @@ def parse_json_311_data(data: Any, city: str, province: str, country: str, user_
                 }
                 pois.append(poi)
     elif isinstance(data, list):
-        for item in data[:25]:
+        for item in data[:max_pois]:
             if "latitude" in item and "longitude" in item:
                 poi = {
                     "name": item.get("complaint_type", f"{city} Service Request"),
@@ -498,13 +498,13 @@ def fetch_usa_311_data(city: str, province: str, user_lat: float, user_lon: floa
     try:
         if city.lower() == "new york" and province.lower() == "new york":
             url = "https://data.cityofnewyork.us/resource/v6wi-cqs5.json"
-            params = {"$limit": 25}
+            params = {"$limit": max_pois}
         elif city.lower() == "san francisco" and province.lower() == "california":
             url = "https://open311.sfgov.org/dev/v2/services.json"
             params = {}
         elif city.lower() == "chicago" and province.lower() == "illinois":
             url = "https://data.cityofchicago.org/resource/v6wi-cqs5.json"
-            params = {"$limit": 25}
+            params = {"$limit": max_pois}
         else:
             print(f"No USA 311 data available for {city}, {province}")
             return []
@@ -517,7 +517,7 @@ def fetch_usa_311_data(city: str, province: str, user_lat: float, user_lon: floa
         
         pois = []
         if isinstance(data, list):
-            for item in data[:25]:
+            for item in data[:max_pois]:
                 if "latitude" in item and "longitude" in item:
                     poi = {
                         "name": item.get("complaint_type", f"{city} Service Request"),

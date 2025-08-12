@@ -46,7 +46,7 @@ async def get_locations(
     
     # print(f"Fetching 311 data for {city}, {province}, {country}")
     try:
-        three11_pois = get_311_pois(city, province, country, user_lat, user_lon)
+        three11_pois = get_311_pois(city, province, country, user_lat, user_lon, max_pois=15)
         all_pois.extend(three11_pois)
     except Exception as e:
         print(f"Error fetching 311 data: {e}")
