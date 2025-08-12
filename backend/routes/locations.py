@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query
 from reddit.service import get_reddit_pois
 from news.service import get_news_pois
 from utils.location import get_user_location, get_location_details
+from three11.service import get_311_pois
 import asyncio
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -28,19 +29,26 @@ async def get_locations(
     all_pois = []
     
     # Get Reddit POIs
-    reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
-    all_pois.extend(reddit_pois)
+    # reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
+    # all_pois.extend(reddit_pois)
     
     # Get News POIs using the new service structure
-    print(f"🗞️ Fetching news for {city}, {province}, {country}")
-    try:
+    # print(f"🗞️ Fetching news for {city}, {province}, {country}")
+    # try:
         # news_pois = get_news_pois(city, province, country, user_lat, user_lon)  # TEMPORARILY DISABLED (API token limit)
-        news_pois = []  # Empty list for now
-        print(f"✅ News API temporarily disabled (API token limit)")
-        all_pois.extend(news_pois)  # Add news POIs to the list
-    except Exception as e:
-        print(f"❌ Error fetching news: {e}")
+        # news_pois = []  # Empty list for now
+        # print(f"✅ News API temporarily disabled (API token limit)")
+        # all_pois.extend(news_pois)  # Add news POIs to the list
+    # except Exception as e:
+        # print(f"❌ Error fetching news: {e}")
     
-    print(f"Returning {len(all_pois)} total POIs (Reddit + News)")
+    # print(f"Fetching 311 data for {city}, {province}, {country}")
+    try:
+        three11_pois = get_311_pois(city, province, country, user_lat, user_lon)
+        all_pois.extend(three11_pois)
+    except Exception as e:
+        print(f"Error fetching 311 data: {e}")
+    
+    print(f"Returning {len(all_pois)} total POIs (Reddit + News + 311)")
     return all_pois
 
