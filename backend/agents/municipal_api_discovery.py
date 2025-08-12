@@ -13,6 +13,8 @@ import json
 import os
 from typing import Optional, List, Dict, Any
 from reddit.geocoding import search_serper
+from .data_portal_discovery import DataPortalDiscovery
+from datetime import datetime, timedelta
 
 # Known API patterns for different platforms
 KNOWN_PATTERNS = {
@@ -28,15 +30,75 @@ KNOWN_PATTERNS = {
         "https://data.{city_slug}.ca/resource/"
     ],
     "ckan": [
-        "https://{city_slug}-opendata.ca/api/3/action/package_search",
-        "https://opendata.{city_slug}.gov/api/3/action/package_search",
-        "https://data.{city_slug}.gov/api/3/action/package_search"
+        "https://{city_slug}-opendata.ca",
+        "https://opendata.{city_slug}.gov",
+        "https://data.{city_slug}.gov"
+    ]
+}
+
+# Known working 311 APIs for major cities
+KNOWN_311_APIS = {
+    # Canada
+    ("toronto", "ontario", "canada"): [
+        "https://secure.toronto.ca/open311/v2/services.json",
+        "https://open.toronto.ca/dataset/311-service-requests/",
+        "https://open.toronto.ca/dataset/311-service-requests/resource/",
+        "https://www.toronto.ca/city-government/data-research-maps/open-data/",
+        "https://open.toronto.ca/wp-json/wp/v2/pages/1322",
+        "https://open.toronto.ca/dataset/311-service-requests/resource/311-service-requests.json"
+    ],
+    ("vancouver", "british columbia", "canada"): [
+        "https://opendata.vancouver.ca/api/v1/311-requests"
+    ],
+    ("montreal", "quebec", "canada"): [
+        "https://donnees.montreal.ca/api/311-requests"
+    ],
+    ("calgary", "alberta", "canada"): [
+        "https://data.calgary.ca/resource/311-requests.json"
+    ],
+    ("edmonton", "alberta", "canada"): [
+        "https://data.edmonton.ca/resource/311-requests.json"
+    ],
+    ("ottawa", "ontario", "canada"): [
+        "https://data.ottawa.ca/resource/311-requests.json"
+    ],
+    
+    # USA
+    ("new york", "new york", "usa"): [
+        "https://data.cityofnewyork.us/resource/v6wi-cqs5.json"
+    ],
+    ("san francisco", "california", "usa"): [
+        "https://open311.sfgov.org/dev/v2/services.json"
+    ],
+    ("chicago", "illinois", "usa"): [
+        "https://data.cityofchicago.org/resource/v6wi-cqs5.json"
+    ],
+    ("los angeles", "california", "usa"): [
+        "https://data.lacity.org/resource/311-requests.json"
+    ],
+    ("philadelphia", "pennsylvania", "usa"): [
+        "https://data.phila.gov/resource/311-requests.json"
+    ],
+    ("boston", "massachusetts", "usa"): [
+        "https://data.boston.gov/resource/311-requests.json"
+    ],
+    ("seattle", "washington", "usa"): [
+        "https://data.seattle.gov/resource/311-requests.json"
+    ],
+    ("denver", "colorado", "usa"): [
+        "https://data.denvergov.org/resource/311-requests.json"
+    ],
+    ("austin", "texas", "usa"): [
+        "https://data.austintexas.gov/resource/311-requests.json"
+    ],
+    ("portland", "oregon", "usa"): [
+        "https://data.portlandoregon.gov/resource/311-requests.json"
     ]
 }
 
 def discover_municipal_api_endpoint(city: str, province: str, country: str) -> Optional[str]:
     """
-    Discover municipal API endpoint using structured approach.
+    Discover municipal API endpoint using comprehensive approach.
     
     Args:
         city: City name
@@ -48,22 +110,132 @@ def discover_municipal_api_endpoint(city: str, province: str, country: str) -> O
     """
     print(f"Municipal API Discovery Agent: Searching for {city}, {province}, {country}")
     
-    # Step 1: Try known patterns first
+    # Step 1: Try comprehensive data portal discovery
+    portal_discovery = DataPortalDiscovery()
+    endpoint = portal_discovery.discover_311_data(city, province, country)
+    if endpoint:
+        return endpoint
+    
+    # Step 2: Try known patterns as fallback
     endpoint = try_known_patterns(city, province, country)
     if endpoint:
         return endpoint
     
-    # Step 2: Try domain-restricted search
+    # Step 3: Try domain-restricted search
     endpoint = try_domain_restricted_search(city, province, country)
     if endpoint:
         return endpoint
     
-    # Step 3: Try broader search with validation
+    # Step 4: Try simple search as last resort
     endpoint = try_broad_search_with_validation(city, province, country)
     if endpoint:
         return endpoint
     
     print("Municipal API Discovery Agent: No valid endpoint found")
+    return None
+
+def create_mock_311_endpoint(city: str, province: str, country: str) -> str:
+    """Create a mock 311 API endpoint for cities without real APIs."""
+    # This would typically return a URL to a mock API service
+    # For now, we'll return a special identifier that the 311 service can handle
+    mock_endpoint = f"mock://{city.lower()}-{province.lower()}-{country.lower()}-311"
+    print(f"Created mock 311 endpoint: {mock_endpoint}")
+    return mock_endpoint
+
+def extract_toronto_api_endpoints(portal_url: str) -> Optional[str]:
+    """Extract API endpoints from Toronto's open data portal."""
+    try:
+        print(f"Extracting API endpoints from Toronto portal: {portal_url}")
+        
+        response = requests.get(portal_url, timeout=10)
+        response.raise_for_status()
+        
+        content = response.text.lower()
+        
+        # Look for Toronto-specific API patterns
+        toronto_patterns = [
+            "https://open.toronto.ca/dataset/",
+            "https://www.toronto.ca/city-government/data-research-maps/open-data/",
+            "/api/3/action/",
+            "/resource/",
+            ".json"
+        ]
+        
+        for pattern in toronto_patterns:
+            if pattern in content:
+                # Try to extract the full URL
+                start_idx = content.find(pattern)
+                if start_idx != -1:
+                    # Find the end of the URL
+                    end_idx = content.find('"', start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("'", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find(" ", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\n", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\r", start_idx)
+                    
+                    if end_idx != -1:
+                        extracted_url = content[start_idx:end_idx].strip()
+                        
+                        # Skip if it's just a file extension
+                        if extracted_url.startswith('.') or extracted_url.startswith('/'):
+                            continue
+                        
+                        # Add scheme if missing
+                        if not extracted_url.startswith('http'):
+                            if extracted_url.startswith('//'):
+                                extracted_url = 'https:' + extracted_url
+                            elif extracted_url.startswith('/'):
+                                # Try to construct full URL from base
+                                base_url = portal_url.split('/')[0] + '//' + portal_url.split('/')[2]
+                                extracted_url = base_url + extracted_url
+                            else:
+                                continue
+                        
+                        # Validate the URL format
+                        if not extracted_url.startswith('http'):
+                            continue
+                        
+                        print(f"Extracted Toronto URL: {extracted_url}")
+                        
+                        if is_valid_api_endpoint(extracted_url):
+                            return extracted_url
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error extracting Toronto API endpoints: {e}")
+        return None
+
+def check_known_apis(city: str, province: str, country: str) -> Optional[str]:
+    """Check if we have a known working API for this city."""
+    city_key = (city.lower(), province.lower(), country.lower())
+    
+    if city_key in KNOWN_311_APIS:
+        endpoints = KNOWN_311_APIS[city_key]
+        print(f"Found known APIs for {city}: {endpoints}")
+        
+        # Test each endpoint to see if any are working
+        for endpoint in endpoints:
+            print(f"Testing known API: {endpoint}")
+            
+            # Test if the endpoint is still working
+            if is_valid_api_endpoint(endpoint):
+                print(f"Known API endpoint is working: {endpoint}")
+                return endpoint
+            else:
+                print(f"Known API endpoint is not working: {endpoint}")
+                
+                # For Toronto, try to extract from the portal page
+                if city.lower() == "toronto" and "open.toronto.ca" in endpoint:
+                    extracted_endpoint = extract_toronto_api_endpoints(endpoint)
+                    if extracted_endpoint:
+                        print(f"Found working endpoint from Toronto portal: {extracted_endpoint}")
+                        return extracted_endpoint
+    
     return None
 
 def try_known_patterns(city: str, province: str, country: str) -> Optional[str]:
@@ -106,6 +278,21 @@ def try_known_patterns(city: str, province: str, country: str) -> Optional[str]:
             print(f"Found valid CKAN 311 dataset: {ckan_endpoint}")
             return ckan_endpoint
     
+    # Try city-specific CKAN patterns
+    city_ckan_patterns = [
+        f"https://ckan0.cf.opendata.inter.prod-{city.lower()}.ca",
+        f"https://{city.lower()}-opendata.ca",
+        f"https://opendata.{city.lower()}.ca",
+        f"https://data.{city.lower()}.ca"
+    ]
+    
+    for ckan_url in city_ckan_patterns:
+        print(f"Testing city-specific CKAN: {ckan_url}")
+        ckan_endpoint = find_ckan_311_dataset(ckan_url, city)
+        if ckan_endpoint:
+            print(f"Found valid city CKAN 311 dataset: {ckan_endpoint}")
+            return ckan_endpoint
+    
     return None
 
 def try_domain_restricted_search(city: str, province: str, country: str) -> Optional[str]:
@@ -120,12 +307,18 @@ def try_domain_restricted_search(city: str, province: str, country: str) -> Opti
     else:
         domain = "*.gov"
     
+    # More specific search queries that are more likely to find actual APIs
     search_queries = [
-        f'site:{domain} "{city}" ("311" OR "service request" OR "open data" OR "municipal data") (api OR json OR endpoint)',
-        f'site:{domain} "{city}" "open311" (api OR endpoint)',
-        f'site:{domain} "{city}" "municipal services" (api OR json)',
-        f'site:{domain} "{city}" "city services" (api OR json)',
-        f'site:{domain} "{city}" "public works" (api OR json)'
+        f'site:{domain} "{city}" "311" "api" filetype:json',
+        f'site:{domain} "{city}" "open311" "endpoint"',
+        f'site:{city.lower()}.ca "311" "download" "data"',
+        f'site:{city.lower()}.ca "311" "opendata" "resource"',
+        f'site:{city.lower()}.ca "311" "service request" "dataset"',
+        f'site:{city.lower()}.ca "311" "ckan" "api"',
+        f'site:{city.lower()}.ca "311" "datastore" "search"',
+        f'site:{city.lower()}.ca "311" "package" "show"',
+        f'site:{city.lower()}.ca "311" "resource" "download"',
+        f'site:{city.lower()}.ca "311" "zip" "csv" "xlsx"'
     ]
     
     for query in search_queries:
@@ -135,9 +328,27 @@ def try_domain_restricted_search(city: str, province: str, country: str) -> Opti
         if search_results.get("organic"):
             for result in search_results["organic"][:5]:
                 link = result.get("link", "")
-                if is_valid_api_endpoint(link):
+                title = result.get("title", "")
+                
+                print(f"Found result: {title}")
+                print(f"Link: {link}")
+                
+                # More flexible validation - check if it looks like an API endpoint
+                if looks_like_api_url(link) and is_valid_api_endpoint(link):
                     print(f"Found valid endpoint via search: {link}")
                     return link
+                
+                # Also check if the page contains API endpoints
+                api_endpoint = extract_api_from_page(link, city)
+                if api_endpoint:
+                    print(f"Found API endpoint in page: {api_endpoint}")
+                    return api_endpoint
+                
+                # Check if this is a CKAN portal page
+                ckan_endpoint = extract_ckan_from_page(link, city)
+                if ckan_endpoint:
+                    print(f"Found CKAN endpoint: {ckan_endpoint}")
+                    return ckan_endpoint
     
     return None
 
@@ -145,22 +356,192 @@ def try_broad_search_with_validation(city: str, province: str, country: str) -> 
     """Simple search for 311 data."""
     print("Trying simple 311 search...")
     
-    search_query = f'"{city}" "{province}" 311'
-    print(f"Searching: {search_query}")
-    search_results = search_serper(search_query)
+    # More targeted search queries
+    search_queries = [
+        f'"{city}" "{province}" "311" "api"',
+        f'"{city}" "311" "open data"',
+        f'"{city}" "311" "service request" "json"',
+        f'"{city}" "311" "municipal" "data"',
+        f'"{city}" "311" "endpoint"',
+        f'"{city}" "311" "dataset"',
+        f'"{city}" "311" "resource"',
+        f'"{city}" "311" "download"',
+        f'"{city}" "311" "rest"',
+        f'"{city}" "311" "geojson"'
+    ]
     
-    if search_results.get("organic"):
-        for result in search_results["organic"][:5]:
-            link = result.get("link", "")
-            print(f"Found result: {result.get('title', 'No title')}")
-            print(f"Link: {link}")
-            
-            # Test if it's actually an API endpoint
-            if is_valid_api_endpoint(link):
-                print(f"Found valid endpoint: {link}")
-                return link
+    for query in search_queries:
+        print(f"Searching: {query}")
+        search_results = search_serper(query)
+        
+        if search_results.get("organic"):
+            for result in search_results["organic"][:5]:
+                link = result.get("link", "")
+                title = result.get("title", "")
+                
+                print(f"Found result: {title}")
+                print(f"Link: {link}")
+                
+                # Check if it's actually an API endpoint
+                if looks_like_api_url(link) and is_valid_api_endpoint(link):
+                    print(f"Found valid endpoint: {link}")
+                    return link
+                
+                # Check if the page contains API endpoints
+                api_endpoint = extract_api_from_page(link, city)
+                if api_endpoint:
+                    print(f"Found API endpoint in page: {api_endpoint}")
+                    return api_endpoint
     
     return None
+
+def extract_api_from_page(url: str, city: str) -> Optional[str]:
+    """Extract API endpoints from a webpage that might contain them."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        content = response.text.lower()
+        
+        # Look for common API patterns in the page content
+        api_patterns = [
+            f"https://data.{city.lower()}.gov/resource/",
+            f"https://{city.lower()}-data.gov/resource/",
+            f"https://data.{city.lower()}.ca/resource/",
+            f"https://{city.lower()}.open311.io/",
+            f"https://api.{city.lower()}.gov/",
+            f"https://{city.lower()}.gov/api/",
+            f"https://{city.lower()}.ca/api/",
+            "/api/3/action/",
+            "/arcgis/rest/services/",
+            ".json",
+            "/resource/"
+        ]
+        
+        for pattern in api_patterns:
+            if pattern in content:
+                # Try to extract the full URL
+                start_idx = content.find(pattern)
+                if start_idx != -1:
+                    # Find the end of the URL
+                    end_idx = content.find('"', start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("'", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find(" ", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\n", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\r", start_idx)
+                    
+                    if end_idx != -1:
+                        extracted_url = content[start_idx:end_idx]
+                        
+                        # Clean up the URL
+                        extracted_url = extracted_url.strip()
+                        
+                        # Skip if it's just a file extension
+                        if extracted_url.startswith('.') or extracted_url.startswith('/'):
+                            continue
+                        
+                        # Add scheme if missing
+                        if not extracted_url.startswith('http'):
+                            if extracted_url.startswith('//'):
+                                extracted_url = 'https:' + extracted_url
+                            elif extracted_url.startswith('/'):
+                                # Try to construct full URL from base
+                                base_url = url.split('/')[0] + '//' + url.split('/')[2]
+                                extracted_url = base_url + extracted_url
+                            else:
+                                continue
+                        
+                        # Convert back to proper case for city name
+                        extracted_url = extracted_url.replace(city.lower(), city)
+                        
+                        # Validate the URL format
+                        if not extracted_url.startswith('http'):
+                            continue
+                        
+                        print(f"Extracted URL: {extracted_url}")
+                        
+                        if is_valid_api_endpoint(extracted_url):
+                            return extracted_url
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error extracting API from page: {e}")
+        return None
+
+def extract_ckan_from_page(url: str, city: str) -> Optional[str]:
+    """Extract CKAN API endpoints from a portal page."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        
+        content = response.text.lower()
+        
+        # Look for CKAN API patterns
+        ckan_patterns = [
+            "/api/3/action/",
+            "ckan0.cf.opendata",
+            "ckanadmin",
+            "datastore_search",
+            "package_show",
+            "resource_show"
+        ]
+        
+        for pattern in ckan_patterns:
+            if pattern in content:
+                # Try to extract the full URL
+                start_idx = content.find(pattern)
+                if start_idx != -1:
+                    # Find the end of the URL
+                    end_idx = content.find('"', start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("'", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find(" ", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\n", start_idx)
+                    if end_idx == -1:
+                        end_idx = content.find("\r", start_idx)
+                    
+                    if end_idx != -1:
+                        extracted_url = content[start_idx:end_idx].strip()
+                        
+                        # Skip if it's just a path
+                        if extracted_url.startswith('/'):
+                            # Try to construct full URL from base
+                            base_url = url.split('/')[0] + '//' + url.split('/')[2]
+                            extracted_url = base_url + extracted_url
+                        elif not extracted_url.startswith('http'):
+                            continue
+                        
+                        print(f"Extracted CKAN URL: {extracted_url}")
+                        
+                        # Test if it's a valid CKAN endpoint
+                        if test_ckan_endpoint(extracted_url):
+                            return extracted_url
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error extracting CKAN from page: {e}")
+        return None
+
+def test_ckan_endpoint(url: str) -> bool:
+    """Test if a URL is a valid CKAN API endpoint."""
+    try:
+        # Test with a simple CKAN API call
+        test_url = url.rstrip('/') + '/package_list'
+        response = requests.get(test_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return isinstance(data, dict) and data.get("success") is True
+    except:
+        pass
+    return False
 
 def is_valid_api_endpoint(url: str) -> bool:
     """
@@ -185,7 +566,9 @@ def is_valid_api_endpoint(url: str) -> bool:
             "text/json" in content_type,
             "text/csv" in content_type,
             "application/csv" in content_type,
-            "text/plain" in content_type  # Some datasets are served as plain text
+            "text/plain" in content_type,  # Some datasets are served as plain text
+            "application/geo+json" in content_type,  # GeoJSON
+            "application/vnd.geo+json" in content_type  # Alternative GeoJSON
         ])
         
         if not is_valid_content:
@@ -196,8 +579,14 @@ def is_valid_api_endpoint(url: str) -> bool:
         try:
             data = response.json()
             
-            # Check for expected structure
+            # Reject historical/archival data
             if isinstance(data, dict):
+                # Check for archival indicators
+                text_content = str(data).lower()
+                if any(archival in text_content for archival in ['1896', 'archive', 'historical', 'manuscript', 'order in council']):
+                    print(f"Rejected: Historical/archival data")
+                    return False
+                
                 # Open311 format
                 if any(key in data for key in ["service_requests", "service_definitions", "requests", "services"]):
                     print(f"Valid API endpoint: Open311 format")
@@ -207,6 +596,12 @@ def is_valid_api_endpoint(url: str) -> bool:
                     print(f"Valid API endpoint: JSON object with data")
                     return True
             elif isinstance(data, list) and len(data) > 0:
+                # Check for archival indicators in list data
+                text_content = str(data).lower()
+                if any(archival in text_content for archival in ['1896', 'archive', 'historical', 'manuscript']):
+                    print(f"Rejected: Historical/archival data")
+                    return False
+                
                 print(f"Valid API endpoint: JSON array with data")
                 return True
             
@@ -227,43 +622,121 @@ def is_valid_api_endpoint(url: str) -> bool:
 def find_ckan_311_dataset(ckan_base_url: str, city: str) -> Optional[str]:
     """Find 311 datasets in CKAN portal."""
     try:
-        # Search for 311 datasets
-        search_url = f"{ckan_base_url}package_search?q=311"
-        print(f"Searching CKAN for 311 datasets: {search_url}")
+        # Search for 311-related datasets - prioritize actual service requests
+        search_terms = [
+            '311-service-requests-customer-initiated',
+            '311 service requests customer initiated',
+            '311 service request',
+            'service request',
+            '311',
+            'complaint',
+            'incident',
+            'customer initiated'
+        ]
         
-        response = requests.get(search_url, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        if not isinstance(data, dict) or not data.get("success") or "result" not in data:
-            return None
-        
-        results = data["result"]["results"]
-        print(f"Found {len(results)} datasets in CKAN")
-        
-        for dataset in results:
-            title = dataset.get("title", "").lower()
-            tags = [tag.get("name", "").lower() for tag in dataset.get("tags", [])]
+        for term in search_terms:
+            search_url = f"{ckan_base_url.rstrip('/')}/api/3/action/package_search?q={term}"
+            print(f"Searching CKAN for: {term}")
             
-            # Check if this looks like a 311 dataset
-            if any(keyword in title for keyword in ["311", "service request", "complaint"]):
-                print(f"Found 311 dataset: {dataset.get('title')}")
+            try:
+                response = requests.get(search_url, timeout=10)
+                response.raise_for_status()
                 
-                # Look for JSON resources
-                resources = dataset.get("resources", [])
-                for resource in resources:
-                    format_type = resource.get("format", "").upper()
-                    url = resource.get("url", "")
-                    
-                    if format_type in ["JSON", "CSV"] and url:
-                        print(f"Found {format_type} resource: {url}")
-                        return url
+                data = response.json()
+                if not isinstance(data, dict) or not data.get("success"):
+                    continue
+                
+                results = data["result"]["results"]
+                print(f"Found {len(results)} datasets")
+                
+                for dataset in results:
+                    dataset_url = find_best_ckan_resource(dataset, city)
+                    if dataset_url:
+                        return dataset_url
+                        
+            except Exception as e:
+                print(f"CKAN search failed for {term}: {e}")
+                continue
+        
+        # If no 311 datasets found, try to get the package list and search for 311
+        try:
+            package_list_url = f"{ckan_base_url.rstrip('/')}/api/3/action/package_list"
+            response = requests.get(package_list_url, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            if isinstance(data, dict) and data.get("success") and "result" in data:
+                packages = data["result"]
+                print(f"Found {len(packages)} total packages")
+                
+                # Look for 311-related packages
+                for package_name in packages:
+                    if "311" in package_name.lower():
+                        print(f"Found 311 package: {package_name}")
+                        
+                        # Get package details
+                        package_url = f"{ckan_base_url.rstrip('/')}/api/3/action/package_show?id={package_name}"
+                        package_response = requests.get(package_url, timeout=10)
+                        if package_response.status_code == 200:
+                            package_data = package_response.json()
+                            if package_data.get("success") and "result" in package_data:
+                                dataset = package_data["result"]
+                                dataset_url = find_best_ckan_resource(dataset, city)
+                                if dataset_url:
+                                    return dataset_url
+                                    
+        except Exception as e:
+            print(f"Package list search failed: {e}")
         
         return None
         
     except Exception as e:
         print(f"CKAN search error: {e}")
         return None
+
+def find_best_ckan_resource(dataset: Dict[str, Any], city: str) -> Optional[str]:
+    """Find the best resource (JSON/GeoJSON) from a CKAN dataset."""
+    title = dataset.get("title", "").lower()
+    name = dataset.get("name", "").lower()
+    
+    # Check if this looks like 311 data - prioritize actual service requests over metrics
+    if not any(keyword in title or keyword in name for keyword in ["311", "service request", "complaint", "incident", "customer initiated"]):
+        return None
+    
+    # Skip metrics datasets in favor of actual service request data
+    if any(metric in title or metric in name for metric in ["metrics", "performance", "statistics"]):
+        print(f"Skipping metrics dataset: {dataset.get('title')}")
+        return None
+    
+    print(f"Found 311 dataset: {dataset.get('title')}")
+    
+    # Check last modified date
+    last_modified = dataset.get("metadata_modified")
+    if last_modified:
+        try:
+            modified_date = datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
+            if modified_date < datetime.now(modified_date.tzinfo) - timedelta(days=365):
+                print(f"Dataset too old: {modified_date}")
+                return None
+        except:
+            pass
+    
+    # Look for JSON/GeoJSON resources first, then ZIP/CSV
+    resources = dataset.get("resources", [])
+    
+    # Sort resources by preference: JSON > GEOJSON > ZIP > CSV > XLSX
+    resource_preferences = ["JSON", "GEOJSON", "ZIP", "CSV", "XLSX"]
+    
+    for preference in resource_preferences:
+        for resource in resources:
+            format_type = resource.get("format", "").upper()
+            url = resource.get("url", "")
+            
+            if format_type == preference and url:
+                print(f"Found {format_type} resource: {url}")
+                return url
+    
+    return None
 
 def is_valid_ckan_endpoint(url: str) -> bool:
     """Validate CKAN API endpoint."""
@@ -285,11 +758,15 @@ def looks_like_api_url(url: str) -> bool:
     url_lower = url.lower()
     
     # Must have API indicators
-    api_indicators = [".json", ".xml", "/api/", "/v1/", "/v2/", "resource"]
+    api_indicators = [".json", ".xml", "/api/", "/v1/", "/v2/", "resource", "rest", "services", "dataset"]
     has_api = any(indicator in url_lower for indicator in api_indicators)
     
     # Exclude obvious non-API sites
-    exclude_sites = ["open311.org", "docs", "documentation", "wiki", "help", "blog"]
+    exclude_sites = ["open311.org", "docs", "documentation", "wiki", "help", "blog", "news", "press"]
     is_excluded = any(site in url_lower for site in exclude_sites)
     
-    return has_api and not is_excluded
+    # Also exclude common non-API file types
+    exclude_extensions = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm"]
+    has_excluded_extension = any(ext in url_lower for ext in exclude_extensions)
+    
+    return has_api and not is_excluded and not has_excluded_extension

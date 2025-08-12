@@ -29,15 +29,17 @@ async def get_locations(
     all_pois = []
     
     # Get Reddit POIs
-    # reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
-    # all_pois.extend(reddit_pois)
-    
+    # try:
+        # reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
+        # all_pois.extend(reddit_pois)
+    # except Exception as e:
+        # print(f"Error fetching Reddit data: {e}")
+        
+
     # Get News POIs using the new service structure
     # print(f"🗞️ Fetching news for {city}, {province}, {country}")
     # try:
-        # news_pois = get_news_pois(city, province, country, user_lat, user_lon)  # TEMPORARILY DISABLED (API token limit)
-        # news_pois = []  # Empty list for now
-        # print(f"✅ News API temporarily disabled (API token limit)")
+        # news_pois = get_news_pois(city, province, country, user_lat, user_lon)
         # all_pois.extend(news_pois)  # Add news POIs to the list
     # except Exception as e:
         # print(f"❌ Error fetching news: {e}")
