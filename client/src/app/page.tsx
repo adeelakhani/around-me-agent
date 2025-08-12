@@ -10,7 +10,24 @@ interface Location {
   summary: string;
   type: string;
   radius: number;
+  creation_date?: string; // Optional date field for 311 services
 }
+
+// Helper function to format dates
+const formatDate = (dateString: string) => {
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (error) {
+    return dateString; // Return original string if parsing fails
+  }
+};
 
 // Better Popup Component
 const LocationPopup = ({ location, onClose }: { location: Location; onClose: () => void }) => {
@@ -20,6 +37,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
       case 'event': return 'E';
       case 'news': return 'N';
       case 'reddit': return 'R';
+      case '311_service': return '🚨';
       default: return '•';
     }
   };
@@ -30,6 +48,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
       case 'event': return 'bg-green-500';
       case 'news': return 'bg-yellow-500';
       case 'reddit': return 'bg-orange-500';
+      case '311_service': return 'bg-red-500';
       default: return 'bg-gray-500';
     }
   };
@@ -61,6 +80,13 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
           <div className="text-gray-300 whitespace-pre-line leading-relaxed text-sm">
             {location.summary}
           </div>
+          
+          {/* Show date for 311 services */}
+          {location.type === '311_service' && location.creation_date && (
+            <div className="mt-3 p-2 bg-gray-800 rounded text-xs text-gray-400">
+              <span className="font-medium">Reported:</span> {formatDate(location.creation_date)}
+            </div>
+          )}
           
           {/* Footer */}
           <div className="mt-4 pt-4 border-t border-gray-700">
@@ -310,6 +336,8 @@ export default function HomePage() {
         return '#F59E0B'; // Yellow
       case 'reddit':
         return '#F97316'; // Orange
+      case '311_service':
+        return '#EF4444'; // Red for 311 services
       default:
         return '#6B7280'; // Gray
     }

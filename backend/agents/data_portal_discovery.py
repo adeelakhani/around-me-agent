@@ -79,12 +79,18 @@ class DataPortalDiscovery:
             f'"{city}" "government" "data" "download"'
         ]
         
-        for query in search_queries:
+        for i, query in enumerate(search_queries):
+            if i >= 5:  # Limit to first 5 queries to prevent infinite loops
+                print("Reached search limit, stopping to prevent infinite loop")
+                break
+                
             print(f"Searching: {query}")
             search_results = search_serper(query)
             
             if search_results.get("organic"):
-                for result in search_results["organic"][:3]:
+                for j, result in enumerate(search_results["organic"][:2]):  # Limit to 2 results per query
+                    if j >= 2:  # Additional safety check
+                        break
                     link = result.get("link", "")
                     title = result.get("title", "")
                     

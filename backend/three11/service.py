@@ -297,9 +297,30 @@ def parse_csv_311_data(csv_content: str, city: str, province: str, country: str,
         csv_reader = csv.DictReader(io.StringIO(csv_content))
         pois = []
         
-        for i, row in enumerate(csv_reader):
+        # Convert to list to get total count and sample from different parts
+        all_rows = list(csv_reader)
+        total_rows = len(all_rows)
+        
+        if total_rows == 0:
+            return []
+        
+        # For 311 data, we want the most recent information
+        # Start from the end of the dataset and work backwards
+        sample_indices = []
+        if total_rows <= max_pois:
+            # If dataset is small, take all rows (most recent first)
+            sample_indices = list(range(total_rows - 1, -1, -1))  # Reverse order
+        else:
+            # Take the most recent rows from the end of the dataset
+            start_idx = total_rows - 1
+            end_idx = max(0, total_rows - max_pois)
+            sample_indices = list(range(start_idx, end_idx, -1))  # Reverse order
+        
+        for i, row_idx in enumerate(sample_indices):
             if i >= max_pois:  # Limit to max_pois POIs
                 break
+                
+            row = all_rows[row_idx]
                 
             # Extract location data - try different possible column names
             lat = None
@@ -346,14 +367,21 @@ def parse_csv_311_data(csv_content: str, city: str, province: str, country: str,
                     lat, lng = llm_coords
                     print(f"✅ Using LLM-generated coordinates: {lat}, {lng}")
                 else:
-                    # Fallback to user location with small offset
-                    print(f"⚠️ LLM couldn't determine coordinates, using fallback location")
-                    lat = user_lat + (0.001 * i)
-                    lng = user_lon + (0.001 * i)
+                    # Skip this POI if we can't determine real coordinates
+                    print(f"⚠️ LLM couldn't determine coordinates, skipping this POI")
+                    continue
             
             # Extract service request information with better field mapping
             service_type = row.get('Service Request Type', row.get('original_service_request_type', 'Service Request'))
             status = row.get('Status', row.get('service_request_status', 'Unknown'))
+            
+            # Extract date information - try common date field names
+            creation_date = None
+            date_fields = ['Creation Date', 'created_date', 'date_created', 'created', 'date', 'timestamp', 'created_at']
+            for date_field in date_fields:
+                if date_field in row and row[date_field]:
+                    creation_date = row[date_field]
+                    break
             
             # Build location description
             location_parts = []
@@ -391,7 +419,8 @@ def parse_csv_311_data(csv_content: str, city: str, province: str, country: str,
                 "ward": row.get('Ward', ''),
                 "postal_code": row.get('First 3 Chars of Postal Code', ''),
                 "division": row.get('Division', ''),
-                "section": row.get('Section', '')
+                "section": row.get('Section', ''),
+                "creation_date": creation_date
             }
             pois.append(poi)
         
@@ -414,6 +443,13 @@ def parse_json_311_data(data: Any, city: str, province: str, country: str, user_
         if "service_requests" in data:
             for request in data["service_requests"][:max_pois]:
                 if "lat" in request and "long" in request:
+                    # Extract date information for JSON data
+                    creation_date = None
+                    for date_field in ['created_date', 'date_created', 'created', 'date', 'timestamp', 'created_at', 'creation_date']:
+                        if date_field in request and request[date_field]:
+                            creation_date = request[date_field]
+                            break
+                    
                     poi = {
                         "name": request.get("service_name", f"{city} Service Request"),
                         "lat": float(request["lat"]),
@@ -421,24 +457,24 @@ def parse_json_311_data(data: Any, city: str, province: str, country: str, user_
                         "type": "311_service",
                         "summary": request.get("description", f"City service request in {city}"),
                         "source": "311_api",
-                        "status": request.get("status", "unknown")
+                        "status": request.get("status", "unknown"),
+                        "creation_date": creation_date
                     }
                     pois.append(poi)
         elif "service_definitions" in data:
-            for service in data["service_definitions"][:max_pois]:
-                poi = {
-                    "name": service.get("service_name", f"{city} Service"),
-                    "lat": user_lat + (0.001 * len(pois)),
-                    "lng": user_lon + (0.001 * len(pois)),
-                    "type": "311_service",
-                    "summary": service.get("description", f"City service available in {city}"),
-                    "source": "311_api",
-                    "status": "available"
-                }
-                pois.append(poi)
+            # Skip service definitions without real coordinates
+            print("⚠️ Service definitions found but no real coordinates available, skipping")
+            pass
     elif isinstance(data, list):
         for item in data[:max_pois]:
             if "latitude" in item and "longitude" in item:
+                # Extract date information for list data
+                creation_date = None
+                for date_field in ['created_date', 'date_created', 'created', 'date', 'timestamp', 'created_at', 'creation_date']:
+                    if date_field in item and item[date_field]:
+                        creation_date = item[date_field]
+                        break
+                
                 poi = {
                     "name": item.get("complaint_type", f"{city} Service Request"),
                     "lat": float(item["latitude"]),
@@ -446,94 +482,13 @@ def parse_json_311_data(data: Any, city: str, province: str, country: str, user_
                     "type": "311_service",
                     "summary": item.get("descriptor", f"City service request in {city}"),
                     "source": "311_api",
-                    "status": item.get("status", "unknown")
+                    "status": item.get("status", "unknown"),
+                    "creation_date": creation_date
                 }
                 pois.append(poi)
     
     return pois
 
-def fetch_canada_311_data(city: str, province: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
-    print(f"Fetching Canadian 311 data for {city}, {province}")
-    
-    try:
-        if city.lower() == "toronto" and province.lower() == "ontario":
-            url = "https://secure.toronto.ca/open311/v2/services.json"
-        elif city.lower() == "vancouver" and province.lower() == "british columbia":
-            url = "https://opendata.vancouver.ca/api/v1/311-requests"
-        elif city.lower() == "montreal" and province.lower() == "quebec":
-            url = "https://donnees.montreal.ca/api/311-requests"
-        else:
-            print(f"No Canadian 311 data available for {city}, {province}")
-            return []
-        
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        print(f"Canadian 311 API response: {data}")
-        
-        pois = []
-        if "service_definitions" in data:
-            for service in data["service_definitions"][:25]:
-                poi = {
-                    "name": service.get("service_name", f"{city} Service"),
-                    "lat": user_lat + (0.001 * len(pois)),
-                    "lng": user_lon + (0.001 * len(pois)),
-                    "type": "311_service",
-                    "summary": service.get("description", f"City service available in {city}"),
-                    "source": "311_api",
-                    "status": "available"
-                }
-                pois.append(poi)
-        
-        return pois
-        
-    except Exception as e:
-        print(f"Canadian 311 API error: {e}")
-        return []
 
-def fetch_usa_311_data(city: str, province: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
-    print(f"Fetching USA 311 data for {city}, {province}")
-    
-    try:
-        if city.lower() == "new york" and province.lower() == "new york":
-            url = "https://data.cityofnewyork.us/resource/v6wi-cqs5.json"
-            params = {"$limit": max_pois}
-        elif city.lower() == "san francisco" and province.lower() == "california":
-            url = "https://open311.sfgov.org/dev/v2/services.json"
-            params = {}
-        elif city.lower() == "chicago" and province.lower() == "illinois":
-            url = "https://data.cityofchicago.org/resource/v6wi-cqs5.json"
-            params = {"$limit": max_pois}
-        else:
-            print(f"No USA 311 data available for {city}, {province}")
-            return []
-        
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        print(f"USA 311 API response: {data}")
-        
-        pois = []
-        if isinstance(data, list):
-            for item in data[:max_pois]:
-                if "latitude" in item and "longitude" in item:
-                    poi = {
-                        "name": item.get("complaint_type", f"{city} Service Request"),
-                        "lat": float(item["latitude"]),
-                        "lng": float(item["longitude"]),
-                        "type": "311_service",
-                        "summary": item.get("descriptor", f"City service request in {city}"),
-                        "source": "311_api",
-                        "status": item.get("status", "unknown")
-                    }
-                    pois.append(poi)
-        
-        return pois
-        
-    except Exception as e:
-        print(f"USA 311 API error: {e}")
-        return []
 
 
