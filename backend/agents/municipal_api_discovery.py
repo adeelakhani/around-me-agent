@@ -507,13 +507,7 @@ def is_valid_data_file(url: str) -> bool:
         print(f"Error validating data file: {e}")
         return False
 
-def create_mock_311_endpoint(city: str, province: str, country: str) -> str:
-    """Create a mock 311 API endpoint for cities without real APIs."""
-    # This would typically return a URL to a mock API service
-    # For now, we'll return a special identifier that the 311 service can handle
-    mock_endpoint = f"mock://{city.lower()}-{province.lower()}-{country.lower()}-311"
-    print(f"Created mock 311 endpoint: {mock_endpoint}")
-    return mock_endpoint
+
 
 def try_known_patterns(city: str, province: str, country: str) -> Optional[str]:
     """Try known API patterns for common municipal platforms."""

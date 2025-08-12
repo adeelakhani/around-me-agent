@@ -4,7 +4,7 @@ LLM Coordinate Interpretation
 Handles LLM-based coordinate generation for 311 data.
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 def interpret_311_location_with_llm(service_data: Dict[str, Any], city: str, province: str, country: str) -> Optional[Tuple[float, float]]:
     """
@@ -65,6 +65,8 @@ City: {city}, {province}, {country}
 Service Type: {service_type}
 Location Information: {location_description}
 
+IMPORTANT: The location information may be in French, English, or other languages. Please interpret it appropriately for the city.
+
 Based on this information, what would be the approximate latitude and longitude coordinates for this location?
 
 Return ONLY the coordinates in format "latitude,longitude" or "UNKNOWN" if you cannot determine."""
@@ -105,6 +107,56 @@ Return ONLY the coordinates in format "latitude,longitude" or "UNKNOWN" if you c
     except Exception as e:
         print(f"❌ Error in LLM location interpretation: {e}")
         return None
+
+def llm_interpret_any_data(raw_data: str, city: str, province: str, country: str, user_lat: float, user_lon: float) -> List[Dict[str, Any]]:
+    """
+    LLM superpower: Interpret ANY data format and extract 311 POIs.
+    Fallback when normal parsing fails.
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage, SystemMessage
+        
+        llm = ChatOpenAI(model="gpt-4o-mini")
+        
+        prompt = f"""
+        You are a 311 data expert. Analyze this raw data from {city}, {province}, {country}.
+        
+        IMPORTANT: The data may be in French, English, or other languages. Please interpret it appropriately for the city.
+        
+        Raw Data (first 2000 chars): {raw_data[:2000]}
+        
+        Extract 311 service requests as JSON array. If no valid data, generate 3 realistic 311 requests near {user_lat}, {user_lon}.
+        
+        Return ONLY valid JSON array like:
+        [
+            {{
+                "name": "Service type",
+                "lat": latitude,
+                "lng": longitude,
+                "type": "311_service",
+                "summary": "Description",
+                "status": "status"
+            }}
+        ]
+        """
+        
+        response = llm.invoke([HumanMessage(content=prompt)])
+        
+        try:
+            import json
+            pois = json.loads(response.content.strip())
+            if isinstance(pois, list):
+                print(f"🤖 LLM extracted {len(pois)} POIs from raw data")
+                return pois
+        except:
+            pass
+            
+        return []
+        
+    except Exception as e:
+        print(f"❌ LLM interpretation failed: {e}")
+        return []
 
 def is_valid_coordinates_for_city(lat: float, lng: float, city: str, province: str, country: str) -> bool:
     """

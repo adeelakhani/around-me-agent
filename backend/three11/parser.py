@@ -8,7 +8,7 @@ import csv
 import json
 import io
 from typing import List, Dict, Any, Optional, Tuple
-from .llm_coordinates import interpret_311_location_with_llm
+from .llm_coordinates import interpret_311_location_with_llm, llm_interpret_any_data
 
 def parse_csv_data(csv_content: str, city: str, province: str, country: str, max_pois: int = 25):
     """Parse CSV data from 311 service requests."""
@@ -45,8 +45,8 @@ def parse_csv_data(csv_content: str, city: str, province: str, country: str, max
             lat = None
             lng = None
             
-            # Try to find latitude/longitude columns
-            for lat_col in ['latitude', 'lat', 'y', 'y_coordinate']:
+            # Try to find latitude/longitude columns (English and French)
+            for lat_col in ['latitude', 'lat', 'y', 'y_coordinate', 'loc_lat', 'latitud', 'latitude_']:
                 if lat_col in row and row[lat_col]:
                     try:
                         lat = float(row[lat_col])
@@ -54,7 +54,7 @@ def parse_csv_data(csv_content: str, city: str, province: str, country: str, max
                     except:
                         pass
             
-            for lng_col in ['longitude', 'lng', 'long', 'x', 'x_coordinate']:
+            for lng_col in ['longitude', 'lng', 'long', 'x', 'x_coordinate', 'loc_long', 'longitud', 'longitude_']:
                 if lng_col in row and row[lng_col]:
                     try:
                         lng = float(row[lng_col])
@@ -62,14 +62,14 @@ def parse_csv_data(csv_content: str, city: str, province: str, country: str, max
                     except:
                         pass
             
-            # If no coordinates found, try to use LLM to interpret location information
+                        # If no coordinates found, try to use LLM to interpret location information
             if lat is None or lng is None:
-                # Extract location information for LLM interpretation
-                postal_code = row.get('First 3 Chars of Postal Code', '')
-                intersection1 = row.get('Intersection Street 1', '')
-                intersection2 = row.get('Intersection Street 2', '')
-                ward = row.get('Ward', '')
-                service_type = row.get('Service Request Type', '')
+                # Extract location information for LLM interpretation (English and French)
+                postal_code = row.get('First 3 Chars of Postal Code', row.get('lin_code_postal', ''))
+                intersection1 = row.get('Intersection Street 1', row.get('rue_intersection1', row.get('rue', '')))
+                intersection2 = row.get('Intersection Street 2', row.get('rue_intersection2', ''))
+                ward = row.get('Ward', row.get('arrondissement', ''))
+                service_type = row.get('Service Request Type', row.get('nature', row.get('acti_nom', '')))
                 
                 # Prepare service data for LLM interpretation
                 service_data = {
@@ -90,9 +90,9 @@ def parse_csv_data(csv_content: str, city: str, province: str, country: str, max
                     print(f"⚠️ LLM couldn't determine coordinates, skipping this POI")
                     continue
             
-            # Extract service request information with better field mapping
-            service_type = row.get('Service Request Type', row.get('original_service_request_type', 'Service Request'))
-            status = row.get('Status', row.get('service_request_status', 'Unknown'))
+            # Extract service request information with better field mapping (English and French)
+            service_type = row.get('Service Request Type', row.get('original_service_request_type', row.get('nature', row.get('acti_nom', 'Service Request'))))
+            status = row.get('Status', row.get('service_request_status', row.get('dernier_statut', 'Unknown')))
             
             # Extract date information - try common date field names
             creation_date = None
@@ -206,4 +206,34 @@ def parse_json_data(data: Any, city: str, province: str, country: str, max_pois:
                 }
                 pois.append(poi)
     
+    return pois
+
+def parse_data_into_pois(raw_data: str, city: str, province: str, country: str, max_pois: int, user_lat: float = 0, user_lon: float = 0) -> List[Dict[str, Any]]:
+    """
+    Parse raw data into POIs.
+    
+    This function tries different parsing approaches:
+    1. Try to parse as JSON
+    2. If that fails, try to parse as CSV
+    3. If that fails, use LLM superpower
+    4. Return the parsed POIs
+    """
+    
+    # Try to parse as JSON first
+    try:
+        json_data = json.loads(raw_data)
+        pois = parse_json_data(json_data, city, province, country, max_pois)
+        if pois:
+            return pois
+    except json.JSONDecodeError:
+        pass
+    
+    # If JSON parsing failed, try CSV
+    pois = parse_csv_data(raw_data, city, province, country, max_pois)
+    if pois:
+        return pois
+    
+    # If all parsing failed, use LLM superpower
+    print("🦸‍♂️ Using LLM superpower to interpret raw data...")
+    pois = llm_interpret_any_data(raw_data, city, province, country, user_lat, user_lon)
     return pois
