@@ -1,8 +1,8 @@
-# backend/routes/locations.py
 from fastapi import APIRouter, Query
 from reddit.service import get_reddit_pois
 from news.service import get_news_pois
-from utils.location import get_user_location, get_location_details
+from events.service import get_events_pois
+from utils.location import get_location_details
 from three11.service import get_311_pois
 import asyncio
 from dotenv import load_dotenv
@@ -18,9 +18,8 @@ async def get_locations(
     if lat and lon:
         user_lat, user_lon = lat, lon
     else:
-        user_lat, user_lon = get_user_location()
+        user_lat, user_lon = 43.6532, -79.3832  # Toronto fallback
     
-    # Get location details from coordinates
     location_details = get_location_details(user_lat, user_lon)
     city = location_details["city"]
     province = location_details["province"]
@@ -28,29 +27,36 @@ async def get_locations(
     
     all_pois = []
     
-    # Get Reddit POIs
+    # # Reddit POIs
     # try:
-        # reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
-        # all_pois.extend(reddit_pois)
+    #     reddit_pois = await get_reddit_pois(city, province, country, user_lat, user_lon)
+    #     all_pois.extend(reddit_pois)
     # except Exception as e:
-        # print(f"Error fetching Reddit data: {e}")
+    #     print(f"Error fetching Reddit data: {e}")
         
 
-    # Get News POIs using the new service structure
-    # print(f"🗞️ Fetching news for {city}, {province}, {country}")
-    # try:
-        # news_pois = get_news_pois(city, province, country, user_lat, user_lon)
-        # all_pois.extend(news_pois)  # Add news POIs to the list
-    # except Exception as e:
-        # print(f"❌ Error fetching news: {e}")
-    
-    # print(f"Fetching 311 data for {city}, {province}, {country}")
+    # News POIs
+    print(f"🗞️ Fetching news for {city}, {province}, {country}")
     try:
-        three11_pois = get_311_pois(city, province, country, user_lat, user_lon, max_pois=15)
-        all_pois.extend(three11_pois)
+        news_pois = get_news_pois(city, province, country, user_lat, user_lon)
+        all_pois.extend(news_pois)  # Add news POIs to the list
     except Exception as e:
-        print(f"Error fetching 311 data: {e}")
+        print(f"❌ Error fetching news: {e}")
     
-    print(f"Returning {len(all_pois)} total POIs (Reddit + News + 311)")
+    # # 311 POIs
+    # print(f"Fetching 311 data for {city}, {province}, {country}")
+    # try:
+    #     three11_pois = get_311_pois(city, province, country, user_lat, user_lon, max_pois=15)
+    #     all_pois.extend(three11_pois)
+    # except Exception as e:
+    #     print(f"Error fetching 311 data: {e}")
+    
+    # try:
+    #     events_pois = get_events_pois(city, province, country, user_lat, user_lon, max_pois=15)
+    #     all_pois.extend(events_pois)
+    # except Exception as e:
+    #     print(f"Error fetching events data: {e}")
+    
+    print(f"Returning {len(all_pois)} total POIs (Reddit + News + 311 + Events)")
     return all_pois
 

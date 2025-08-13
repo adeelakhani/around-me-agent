@@ -2,10 +2,6 @@ import requests
 from typing import Tuple, Dict
 import os
 
-def get_user_location() -> Tuple[float, float]:
-    """Get the user's location using IP geolocation."""
-    return 43.6532, -79.3832
-
 def get_location_details(lat: float, lon: float) -> dict:
     """Get city, province/state, and country using coordinates via Mapbox Geocoding API."""
     mapbox_token = os.getenv("MAPBOX_ACCESS_TOKEN")
