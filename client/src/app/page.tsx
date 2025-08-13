@@ -112,13 +112,24 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
 
   const showToast = (message: string) => {
     const toast = document.createElement('div');
-    toast.className = 'fixed top-4 right-4 z-[10001] bg-gray-900 text-white px-4 py-3 rounded-lg shadow-xl text-sm font-medium';
+    toast.className = 'fixed top-4 right-4 z-[10001] bg-gray-900 text-white px-4 py-3 rounded-lg shadow-xl text-sm font-medium transform transition-all duration-300 ease-out opacity-0 translate-y-2';
     toast.textContent = message;
     document.body.appendChild(toast);
     
+    // Trigger animation
     setTimeout(() => {
-      document.body.removeChild(toast);
-    }, 3000);
+      toast.classList.remove('opacity-0', 'translate-y-2');
+      toast.classList.add('opacity-100', 'translate-y-0');
+    }, 10);
+    
+    setTimeout(() => {
+      toast.classList.add('opacity-0', 'translate-y-2');
+      setTimeout(() => {
+        if (document.body.contains(toast)) {
+          document.body.removeChild(toast);
+        }
+      }, 300);
+    }, 2700);
   };
 
   const getTypeIcon = (type: string) => {
@@ -190,7 +201,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
             </div>
             <button
               onClick={onClose}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-200"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-200 cursor-pointer"
             >
               <svg
                 className="w-4 h-4"
@@ -245,7 +256,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
                 <div className="flex space-x-2">
                   <button
                     onClick={shareLocation}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all duration-200 hover:scale-105"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all duration-200 hover:scale-105 cursor-pointer"
                     style={{ backgroundColor: theme.primary }}
                     title="Share location"
                   >
@@ -261,7 +272,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
                   </button>
                   <button
                     onClick={copyToClipboard}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all duration-200 hover:scale-105"
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all duration-200 hover:scale-105 cursor-pointer"
                     style={{ backgroundColor: theme.primary }}
                     title="Copy coordinates"
                   >
@@ -285,12 +296,14 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
   )
 };
 
-const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }: { 
+const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, recentLocations, onLocationSelect }: { 
   isOpen: boolean; 
   onToggle: () => void; 
   locations: Location[];
   activeFilters: string[];
   onFilterChange: (filters: string[]) => void;
+  recentLocations: Location[];
+  onLocationSelect: (location: Location) => void;
 }) => {
   const locationTypes = [
     {
@@ -341,7 +354,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }:
           </div>
           <button
             onClick={onToggle}
-            className="w-10 h-10 bg-gray-50/50 hover:bg-gray-100/50 rounded-2xl flex items-center justify-center text-gray-400 hover:text-gray-600 transition-all duration-300 border border-gray-100/30"
+            className="w-10 h-10 bg-gray-50/50 hover:bg-gray-100/50 rounded-2xl flex items-center justify-center text-gray-400 hover:text-gray-600 transition-all duration-300 border border-gray-100/30 cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -361,8 +374,8 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }:
               <div className="text-xs text-gray-400 uppercase tracking-widest font-light">Visible Points</div>
             </div>
             <div className="bg-gray-25/50 rounded-2xl p-6 border border-gray-50/50">
-              <div className="text-3xl font-light text-gray-900 mb-2">{radiusKm}</div>
-              <div className="text-xs text-gray-400 uppercase tracking-widest font-light">KM Radius</div>
+              <div className="text-3xl font-light text-gray-900 mb-2">{activeFilters.length}</div>
+              <div className="text-xs text-gray-400 uppercase tracking-widest font-light">Active Filters</div>
             </div>
           </div>
         </div>
@@ -374,7 +387,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }:
             {activeFilters.length < locationTypes.length && (
               <button
                 onClick={() => onFilterChange(locationTypes.map(item => item.type))}
-                className="text-xs text-gray-500 hover:text-gray-700 font-medium tracking-wide"
+                className="text-xs text-gray-500 hover:text-gray-700 font-medium tracking-wide cursor-pointer"
               >
                 Show All
               </button>
@@ -389,7 +402,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }:
                   activeFilters.includes(item.type)
                     ? "bg-black text-white border-black shadow-lg"
                     : "bg-white/50 hover:bg-gray-25/50 border-gray-100/50 text-gray-700"
-                }`}
+                } cursor-pointer`}
               >
                 <div className="flex items-center space-x-4">
                   <div
@@ -413,46 +426,41 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange }:
         <div>
           <h3 className="text-lg font-light text-gray-900 mb-6 tracking-tight">Recent Activity</h3>
           <div className="space-y-4">
-            {locations.slice(0, 3).map((location, idx) => (
-              <div key={idx} className="bg-white/50 rounded-2xl p-5 border border-gray-100/50">
-                <div className="flex items-start space-x-4">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full flex-shrink-0 mt-2"></div>
-                  <div className="min-w-0">
-                    <div className="font-light text-gray-900 text-sm leading-tight tracking-tight truncate">
-                      {location.name}
+            {recentLocations.length > 0 ? (
+              recentLocations.map((location, idx) => {
+                const theme = getThemeColors(location.type);
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => onLocationSelect(location)}
+                    className="w-full bg-white/50 rounded-2xl p-5 border border-gray-100/50 hover:bg-white/70 transition-all duration-200 text-left cursor-pointer"
+                  >
+                    <div className="flex items-start space-x-4">
+                      <div 
+                        className="w-2 h-2 rounded-full flex-shrink-0 mt-2"
+                        style={{ backgroundColor: theme.primary }}
+                      ></div>
+                      <div className="min-w-0">
+                        <div className="font-light text-gray-900 text-sm leading-tight tracking-tight truncate">
+                          {location.name}
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1 capitalize font-light tracking-wide">
+                          {location.type.replace("_", " ")}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-400 mt-1 capitalize font-light tracking-wide">
-                      {location.type.replace("_", " ")}
-                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="bg-white/50 rounded-2xl p-5 border border-gray-100/50">
+                <div className="text-center">
+                  <div className="text-gray-400 text-sm font-light tracking-wide">
+                    Click on map markers to see recent activity
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Settings */}
-        <div>
-          <h3 className="text-lg font-light text-gray-900 mb-6 tracking-tight">Display</h3>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-light text-gray-700 tracking-wide">3D Buildings</span>
-              <div className="w-12 h-6 bg-black rounded-full relative">
-                <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-light text-gray-700 tracking-wide">Smooth Animations</span>
-              <div className="w-12 h-6 bg-black rounded-full relative">
-                <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div>
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-light text-gray-700 tracking-wide">Auto-refresh</span>
-              <div className="w-12 h-6 bg-gray-200 rounded-full relative">
-                <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -465,6 +473,7 @@ export default function HomePage() {
   const [filteredLocations, setFilteredLocations] = useState<Location[]>([]);
   const [activeFilters, setActiveFilters] = useState<string[]>(['event', 'news', 'reddit', '311_service']); // Start with all active
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  const [recentLocations, setRecentLocations] = useState<Location[]>([]); // Track last 3 clicked locations
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -493,6 +502,18 @@ export default function HomePage() {
 
   const handleFilterChange = (filters: string[]) => {
     setActiveFilters(filters);
+  };
+
+  // Add location to recent history when clicked
+  const addToRecent = (location: Location) => {
+    setRecentLocations(prev => {
+      // Remove if already exists (to avoid duplicates)
+      const filtered = prev.filter(loc => 
+        loc.lat !== location.lat || loc.lng !== location.lng || loc.name !== location.name
+      );
+      // Add to beginning and keep only last 3
+      return [location, ...filtered].slice(0, 3);
+    });
   };
 
   useEffect(() => {
@@ -641,73 +662,53 @@ export default function HomePage() {
   };
 
   const addMarkersToMap = (locations: Location[]) => {
-    if (!map.current) return;
+    if (!map.current) return
 
-    console.log('Adding markers for locations:', locations);
+    console.log("Adding markers for locations:", locations)
 
-    // Remove existing markers
-    const existingMarkers = document.querySelectorAll('.mapboxgl-marker:not(.center-marker)');
-    existingMarkers.forEach(marker => marker.remove());
+    const existingMarkers = document.querySelectorAll(".mapboxgl-marker:not(.center-marker)")
+    existingMarkers.forEach((marker) => marker.remove())
 
     locations.forEach((location, idx) => {
-      console.log(`Creating marker ${idx + 1}:`, {
-        name: location.name,
-        lat: location.lat,
-        lng: location.lng,
-        type: location.type,
-        latType: typeof location.lat,
-        lngType: typeof location.lng
-      });
+      const lat = Number(location.lat)
+      const lng = Number(location.lng)
 
-      // Ensure coordinates are numbers and validate them
-      const lat = Number(location.lat);
-      const lng = Number(location.lng);
-      
-      // Validate coordinates
       if (isNaN(lat) || isNaN(lng)) {
-        console.error(`Invalid coordinates for ${location.name}: lat=${location.lat}, lng=${location.lng}`);
-        return;
+        console.error(`Invalid coordinates for ${location.name}: lat=${location.lat}, lng=${location.lng}`)
+        return
       }
-      
-      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        console.error(`Coordinates out of range for ${location.name}: lat=${lat}, lng=${lng}`);
-        return;
-      }
-      
-      console.log(`Parsed coordinates: lat=${lat} (${typeof lat}), lng=${lng} (${typeof lng})`);
 
+      if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        console.error(`Coordinates out of range for ${location.name}: lat=${lat}, lng=${lng}`)
+        return
+      }
+
+      const theme = getThemeColors(location.type)
       // Create a simple colored circle marker
       const markerEl = document.createElement('div');
-      markerEl.style.width = '32px';
-      markerEl.style.height = '32px';
-      markerEl.style.backgroundColor = getMarkerColor(location.type);
-      markerEl.style.border = '3px solid white';
+      markerEl.style.width = '16px';
+      markerEl.style.height = '16px';
+      markerEl.style.background = `radial-gradient(circle at 30% 30%, #ffffff 0%, ${getMarkerColor(location.type)} 40%, ${getMarkerColor(location.type)} 100%)`;
+      markerEl.style.border = 'none';
       markerEl.style.borderRadius = '50%';
-      markerEl.style.boxShadow = '0 4px 8px rgba(0,0,0,0.5)';
+      markerEl.style.boxShadow = `0 0 20px ${getMarkerColor(location.type)}80, 0 0 40px ${getMarkerColor(location.type)}60, 0 4px 8px rgba(0,0,0,0.4), inset 0 2px 4px rgba(255,255,255,0.8), inset 0 -2px 4px rgba(0,0,0,0.3)`;
       markerEl.style.cursor = 'pointer';
       markerEl.style.zIndex = '1000';
 
-      // Create and add marker with proper positioning
       const marker = new mapboxgl.Marker({
         element: markerEl,
         anchor: 'center'
       })
         .setLngLat([lng, lat])
-        .addTo(map.current!);
+        .addTo(map.current!)
 
-      console.log(`Marker ${location.name} positioned at:`, [lng, lat]);
-      console.log(`Raw coordinates from backend: lat=${location.lat}, lng=${location.lng}`);
-      console.log(`Mapbox expects: [longitude, latitude] = [${lng}, ${lat}]`);
-
-      // Add click event
       markerEl.addEventListener('click', (e) => {
-        e.stopPropagation();
-        console.log('Marker clicked:', location.name);
-        console.log('Setting selected location with coordinates:', { lat: location.lat, lng: location.lng });
-        setSelectedLocation(location);
-      });
-    });
-  };
+        e.stopPropagation()
+        console.log('Marker clicked:', location.name)
+        setSelectedLocation(location)
+      })
+    })
+  }
 
   const getMarkerColor = (type: string) => {
     const theme = getThemeColors(type)
@@ -737,7 +738,7 @@ export default function HomePage() {
           <p className="text-gray-500 mb-8 font-light leading-relaxed">{error}</p>
           <button
             onClick={() => fetchLocations(TORONTO_LAT, TORONTO_LNG)}
-            className="px-8 py-4 bg-black text-white rounded-2xl hover:bg-gray-800 transition-all duration-300 font-light tracking-wide"
+            className="px-8 py-4 bg-black text-white rounded-2xl hover:bg-gray-800 transition-all duration-300 font-light tracking-wide cursor-pointer"
           >
             Try Again
           </button>
@@ -748,10 +749,10 @@ export default function HomePage() {
 
   return (
     <div className="h-screen w-screen relative bg-gray-25">
-      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} locations={locations} activeFilters={activeFilters} onFilterChange={handleFilterChange} />
+      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} locations={locations} activeFilters={activeFilters} onFilterChange={handleFilterChange} recentLocations={recentLocations} onLocationSelect={setSelectedLocation} />
 
       {/* Map Container - adjusted to account for sidebar being open by default */}
-      <div className={`h-full transition-all duration-700 ease-out ${sidebarOpen ? "ml-96" : "ml-0"}`}>
+      <div className={`h-full w-full transition-all duration-700 ease-out ${sidebarOpen ? "ml-96" : "ml-0"}`}>
         {loading && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex items-center justify-center">
             <div className="text-center">
@@ -774,7 +775,7 @@ export default function HomePage() {
           <div className="absolute top-8 left-8 z-10">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="w-12 h-12 bg-white/90 backdrop-blur-xl hover:bg-white/95 rounded-2xl flex items-center justify-center text-gray-600 hover:text-gray-900 transition-all duration-300 border border-gray-100/50 shadow-lg group"
+              className="w-12 h-12 bg-white/90 backdrop-blur-xl hover:bg-white/95 rounded-2xl flex items-center justify-center text-gray-600 hover:text-gray-900 transition-all duration-300 border border-gray-100/50 shadow-lg group cursor-pointer"
             >
               <svg
                 className="w-4 h-4 transition-transform duration-300 group-hover:scale-110"
