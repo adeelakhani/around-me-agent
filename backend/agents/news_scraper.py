@@ -17,33 +17,58 @@ def get_news_for_city(city: str, province: str, country: str, lat: float, lng: f
     keyword = f"{city} {province}"
     
     search_queries = [
-        f"{city} local news",
-        f"{city} events",
-        f"{city} local",
-        f"{city} community",
-        f"{city} neighborhood",
-        f"{city} downtown",
-        f"{city} restaurants",
-        f"{city} food",
-        f"{city} transit",
-        f"{city} weather",
+        f"{city} festival",
+        f"{city} concert",
+        f"{city} event",
+        f"{city} show",
+        f"{city} performance",
+        f"{city} exhibition",
+        f"{city} launch",
+        f"{city} opening",
+        f"{city} happening",
+        f"{city} tonight",
+        f"{city} this weekend",
+        f"{city} local event",
+        f"{city} community event",
+        f"{city} street festival",
+        f"{city} food festival",
+        f"{city} music festival",
+        f"{city} art show",
+        f"{city} theater production",
+        f"{city} museum exhibit",
+        f"{city} gallery opening",
+        f"{city} pop-up",
+        f"{city} fair",
+        f"{city} celebration",
+        
+        # Relevant local queries (the good ones from before)
         f"{city} sports",
         f"{city} culture",
         f"{city} entertainment",
-        f"{city} festival",
-        f"{city} concert",
+        f"{city} restaurants",
+        f"{city} food",
+        f"{city} dining",
+        f"{city} cafe",
+        f"{city} bar",
         f"{city} theater",
         f"{city} museum",
         f"{city} park",
         f"{city} shopping",
         f"{city} market",
-        f"{city} street",
-        f"{city} district",
-        f"{city} area",
-        f"{city} news",
-        f"{city} {province}",
-        f"{city} {province} {country}"
+        f"{city} downtown",
+        f"{city} neighborhood",
+        f"{city} community",
+        f"{city} local",
+        f"{city} new business",
+        f"{city} restaurant opening",
+        f"{city} construction",
+        f"{city} development"
     ]
+    
+    # Add date filtering to get recent articles
+    from datetime import datetime, timedelta
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)  # Get articles from last 7 days
     
     params = {
         "resultType": "articles",
@@ -54,7 +79,9 @@ def get_news_for_city(city: str, province: str, country: str, lat: float, lng: f
         "apiKey": news_api_key,
         "isDuplicate": False,
         "dataType": ["news", "blog", "pr"],
-        "locationUri": f"http://en.wikipedia.org/wiki/{city.replace(' ', '_')}"
+        "locationUri": f"http://en.wikipedia.org/wiki/{city.replace(' ', '_')}",
+        "dateStart": start_date.strftime("%Y-%m-%d"),
+        "dateEnd": end_date.strftime("%Y-%m-%d")
     }
     
     try:
@@ -259,8 +286,9 @@ def create_news_poi(article: Dict[str, Any], location: Dict[str, Any], city: str
     body = article.get("body", "")
     source = article.get("source", {}).get("title", "Unknown Source")
     url = article.get("url", "")
+    date = article.get("date", "")
     
-    summary = create_authentic_news_summary(title, body, source, location["name"])
+    summary = create_authentic_news_summary(title, body, source, location["name"], date)
     
     poi = {
         "name": location["name"],
@@ -270,7 +298,8 @@ def create_news_poi(article: Dict[str, Any], location: Dict[str, Any], city: str
         "type": "news",
         "radius": 20,
         "source": source,
-        "url": url
+        "url": url,
+        "date": date
     }
     
     return poi
@@ -281,10 +310,11 @@ def create_fallback_news_poi(article: Dict[str, Any], lat: float, lng: float, ci
     body = article.get("body", "")
     source = article.get("source", {}).get("title", "Unknown Source")
     url = article.get("url", "")
+    date = article.get("date", "")
     
     name = extract_meaningful_name(title, city)
     
-    summary = create_authentic_news_summary(title, body, source, name)
+    summary = create_authentic_news_summary(title, body, source, name, date)
     
     import random
     lat_variation = random.uniform(-0.01, 0.01)
@@ -298,7 +328,8 @@ def create_fallback_news_poi(article: Dict[str, Any], lat: float, lng: float, ci
         "type": "news",
         "radius": 20,
         "source": source,
-        "url": url
+        "url": url,
+        "date": date
     }
     
     return poi
@@ -324,7 +355,7 @@ def extract_meaningful_name(title: str, city: str) -> str:
     else:
         return title
 
-def create_authentic_news_summary(title: str, body: str, source: str, location_name: str) -> str:
+def create_authentic_news_summary(title: str, body: str, source: str, location_name: str, date: str = "") -> str:
     """Create an authentic news summary using actual article content"""
     
     if body:
@@ -335,5 +366,16 @@ def create_authentic_news_summary(title: str, body: str, source: str, location_n
     
     if location_name and location_name not in summary:
         summary = f"Breaking news from {source} about {location_name}: {title}"
+    
+    # Add date if available
+    if date:
+        try:
+            # Format the date nicely
+            from datetime import datetime
+            parsed_date = datetime.fromisoformat(date.replace('Z', '+00:00'))
+            formatted_date = parsed_date.strftime("%B %d, %Y")
+            summary += f"\n📅 Published: {formatted_date}"
+        except:
+            summary += f"\n📅 Published: {date}"
     
     return summary[:400]
