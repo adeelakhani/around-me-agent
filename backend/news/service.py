@@ -14,7 +14,6 @@ def get_news_pois(city: str, province: str, country: str, user_lat: float, user_
     print("=" * 50)
     
     try:
-        # Get news POIs using the news scraper
         news_pois = get_news_for_city(city, province, country, user_lat, user_lon)
         
         if news_pois:

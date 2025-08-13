@@ -23,17 +23,14 @@ def interpret_311_location_with_llm(service_data: Dict[str, Any], city: str, pro
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage, SystemMessage
         
-        # Initialize LLM
         llm = ChatOpenAI(model="gpt-4o-mini")
         
-        # Extract location information from the service data
         postal_code = service_data.get('postal_code', '')
         intersection1 = service_data.get('intersection1', '')
         intersection2 = service_data.get('intersection2', '')
         ward = service_data.get('ward', '')
         service_type = service_data.get('service_type', '')
         
-        # Build location description
         location_parts = []
         if ward:
             location_parts.append(f"Ward: {ward}")
@@ -46,7 +43,6 @@ def interpret_311_location_with_llm(service_data: Dict[str, Any], city: str, pro
         
         location_description = ', '.join(location_parts) if location_parts else "General area"
         
-        # Create prompt for LLM
         system_prompt = """You are a location interpretation specialist for municipal 311 service requests. 
 Your task is to analyze location information from 311 data and provide approximate coordinates.
 
@@ -71,7 +67,6 @@ Based on this information, what would be the approximate latitude and longitude 
 
 Return ONLY the coordinates in format "latitude,longitude" or "UNKNOWN" if you cannot determine."""
 
-        # Get LLM response
         response = llm.invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
@@ -80,17 +75,14 @@ Return ONLY the coordinates in format "latitude,longitude" or "UNKNOWN" if you c
         response_text = response.content.strip()
         print(f"🤖 LLM location interpretation: {response_text}")
         
-        # Parse coordinates
         if response_text.upper() != "UNKNOWN":
             try:
-                # Handle different response formats
                 if ',' in response_text:
                     coords = response_text.split(',')
                     if len(coords) == 2:
                         lat = float(coords[0].strip())
                         lng = float(coords[1].strip())
                         
-                        # Validate coordinates are reasonable for the city
                         if is_valid_coordinates_for_city(lat, lng, city, province, country):
                             print(f"✅ LLM generated coordinates: {lat}, {lng}")
                             return (lat, lng)
@@ -172,7 +164,6 @@ def is_valid_coordinates_for_city(lat: float, lng: float, city: str, province: s
     Returns:
         True if coordinates are reasonable for the city
     """
-    # Define reasonable coordinate ranges for major cities
     city_bounds = {
         ("toronto", "ontario", "canada"): {
             "lat_min": 43.5, "lat_max": 43.9,
@@ -203,5 +194,4 @@ def is_valid_coordinates_for_city(lat: float, lng: float, city: str, province: s
         return (bounds["lat_min"] <= lat <= bounds["lat_max"] and 
                 bounds["lng_min"] <= lng <= bounds["lng_max"])
     
-    # For unknown cities, use a very broad range
     return -90 <= lat <= 90 and -180 <= lng <= 180

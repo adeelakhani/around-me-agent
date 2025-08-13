@@ -12,7 +12,6 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 from utils.location import get_location_details
 
-# Import our organized modules
 from .discovery import discover_311_endpoint
 from .fetcher import fetch_data_from_endpoint
 from .parser import parse_data_into_pois
@@ -31,7 +30,6 @@ def get_311_pois(city: str, province: str, country: str, user_lat: float, user_l
     5. Return the results
     """
     
-    # STEP 1: Log the start of the process
     print(f"Starting 311 API for coordinates: {user_lat}, {user_lon} in {city}, {province}, {country}")
     
     timestamp = int(time.time())
@@ -45,7 +43,6 @@ def get_311_pois(city: str, province: str, country: str, user_lat: float, user_l
     try:
         pois = []
         
-        # STEP 2: Discover the API endpoint
         print(f"Fetching 311 data for {city}, {province}, {country}")
         api_endpoint = discover_311_endpoint(city, province, country)
         
@@ -53,17 +50,14 @@ def get_311_pois(city: str, province: str, country: str, user_lat: float, user_l
             print(f"No 311 API found for {city}, {province}, {country}")
             return []
         
-        # STEP 3: Fetch data from the endpoint
         raw_data = fetch_data_from_endpoint(api_endpoint)
         
         if not raw_data:
             print("Failed to fetch data from API endpoint")
             return []
         
-        # STEP 4: Parse the data into POIs
         pois = parse_data_into_pois(raw_data, city, province, country, max_pois, user_lat, user_lon)
         
-        # STEP 5: Log and return results
         if pois:
             print(f"=== FOUND {len(pois)} 311 POIs ===")
             for i, poi in enumerate(pois, 1):

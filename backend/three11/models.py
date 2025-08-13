@@ -38,7 +38,7 @@ class ServiceRequest:
 class APIConfig:
     """Configuration for a 311 API endpoint."""
     url: str
-    format: str  # 'json', 'csv', 'ckan', 'open311'
+    format: str
     city: str
     province: str
     country: str

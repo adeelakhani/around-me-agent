@@ -39,7 +39,6 @@ class DataPortalDiscovery:
         """
         print(f"Data Portal Discovery: Searching for {city}, {province}, {country}")
         
-        # Step 1: Try to find the city's open data portal
         portal_info = self.find_open_data_portal(city, province, country)
         if not portal_info:
             print("No open data portal found")
@@ -50,7 +49,6 @@ class DataPortalDiscovery:
         
         print(f"Found {portal_type} portal: {portal_url}")
         
-        # Step 2: Search for 311 datasets in the portal
         if portal_type == 'ckan':
             return self.search_ckan_portal(portal_url, city)
         elif portal_type == 'socrata':
@@ -65,7 +63,6 @@ class DataPortalDiscovery:
         """Find the city's open data portal using search."""
         print("Searching for open data portal...")
         
-        # More specific search queries that are more likely to find actual portals
         search_queries = [
             f'"{city}" "{province}" "open data" site:*.gov',
             f'"{city}" "{province}" "open data" site:*.ca',
@@ -80,7 +77,7 @@ class DataPortalDiscovery:
         ]
         
         for i, query in enumerate(search_queries):
-            if i >= 5:  # Limit to first 5 queries to prevent infinite loops
+            if i >= 5:
                 print("Reached search limit, stopping to prevent infinite loop")
                 break
                 
@@ -88,8 +85,8 @@ class DataPortalDiscovery:
             search_results = search_serper(query)
             
             if search_results.get("organic"):
-                for j, result in enumerate(search_results["organic"][:2]):  # Limit to 2 results per query
-                    if j >= 2:  # Additional safety check
+                for j, result in enumerate(search_results["organic"][:2]):
+                    if j >= 2:
                         break
                     link = result.get("link", "")
                     title = result.get("title", "")
@@ -97,7 +94,6 @@ class DataPortalDiscovery:
                     print(f"Found result: {title}")
                     print(f"Link: {link}")
                     
-                    # Detect portal type from URL/title
                     portal_type = self.detect_portal_type(link, title)
                     if portal_type:
                         return {
@@ -106,7 +102,6 @@ class DataPortalDiscovery:
                             'title': title
                         }
                     
-                    # If no portal type detected, try to extract API endpoints from the page
                     api_endpoint = self.extract_api_from_portal_page(link, city)
                     if api_endpoint:
                         return {
@@ -125,7 +120,6 @@ class DataPortalDiscovery:
             
             content = response.text.lower()
             
-            # Look for common API patterns in the page content
             api_patterns = [
                 f"https://data.{city.lower()}.gov/resource/",
                 f"https://{city.lower()}-data.gov/resource/",
@@ -142,10 +136,8 @@ class DataPortalDiscovery:
             
             for pattern in api_patterns:
                 if pattern in content:
-                    # Try to extract the full URL
                     start_idx = content.find(pattern)
                     if start_idx != -1:
-                        # Find the end of the URL
                         end_idx = content.find('"', start_idx)
                         if end_idx == -1:
                             end_idx = content.find("'", start_idx)
@@ -154,10 +146,8 @@ class DataPortalDiscovery:
                         
                         if end_idx != -1:
                             extracted_url = content[start_idx:end_idx]
-                            # Convert back to proper case
                             extracted_url = extracted_url.replace(city.lower(), city)
                             
-                            # Test if it's a valid API endpoint
                             if self.test_api_endpoint(extracted_url):
                                 return extracted_url
             
@@ -189,25 +179,19 @@ class DataPortalDiscovery:
         url_lower = url.lower()
         title_lower = title.lower()
         
-        # Skip obviously wrong results
         if any(skip in url_lower for skip in ['pubmed', 'ncbi', 'library', 'archive', 'bac-lac']):
             return None
         
-        # CKAN indicators
         if any(indicator in url_lower for indicator in ['/api/3/action', 'ckan', 'opendata']):
             return 'ckan'
         
-        # Socrata indicators
         if any(indicator in url_lower for indicator in ['socrata', 'data.city', 'data.gov', '/resource/']):
             return 'socrata'
         
-        # ArcGIS indicators
         if any(indicator in url_lower for indicator in ['arcgis', 'rest/services', 'gis']):
             return 'arcgis'
         
-        # Generic open data indicators
         if any(indicator in title_lower for indicator in ['open data', 'data portal', 'opendata']):
-            # Try to detect by testing common endpoints
             if self.test_ckan_endpoint(url):
                 return 'ckan'
             elif self.test_socrata_endpoint(url):
@@ -220,7 +204,6 @@ class DataPortalDiscovery:
     def test_ckan_endpoint(self, base_url: str) -> bool:
         """Test if URL is a CKAN portal."""
         try:
-            # Try CKAN API endpoint
             test_url = f"{base_url.rstrip('/')}/api/3/action/package_list"
             response = self.session.get(test_url, timeout=5)
             if response.status_code == 200:
@@ -233,7 +216,6 @@ class DataPortalDiscovery:
     def test_socrata_endpoint(self, base_url: str) -> bool:
         """Test if URL is a Socrata portal."""
         try:
-            # Try Socrata API endpoint
             test_url = f"{base_url.rstrip('/')}/api/views.json"
             response = self.session.get(test_url, timeout=5)
             if response.status_code == 200:
@@ -246,7 +228,6 @@ class DataPortalDiscovery:
     def test_arcgis_endpoint(self, base_url: str) -> bool:
         """Test if URL is an ArcGIS portal."""
         try:
-            # Try ArcGIS REST endpoint
             test_url = f"{base_url.rstrip('/')}/arcgis/rest/services"
             response = self.session.get(test_url, timeout=5)
             return response.status_code == 200
@@ -259,7 +240,6 @@ class DataPortalDiscovery:
         print(f"Searching CKAN portal: {portal_url}")
         
         try:
-            # Search for 311-related datasets
             search_terms = ['311', 'service request', 'complaint', 'incident']
             
             for term in search_terms:
@@ -295,13 +275,11 @@ class DataPortalDiscovery:
         """Find the best resource (JSON/GeoJSON) from a CKAN dataset."""
         title = dataset.get("title", "").lower()
         
-        # Check if this looks like 311 data
         if not any(keyword in title for keyword in ["311", "service request", "complaint", "incident"]):
             return None
         
         print(f"Found 311 dataset: {dataset.get('title')}")
         
-        # Check last modified date
         last_modified = dataset.get("metadata_modified")
         if last_modified:
             try:
@@ -312,7 +290,6 @@ class DataPortalDiscovery:
             except:
                 pass
         
-        # Look for JSON/GeoJSON resources
         resources = dataset.get("resources", [])
         for resource in resources:
             format_type = resource.get("format", "").upper()
@@ -329,7 +306,6 @@ class DataPortalDiscovery:
         print(f"Searching Socrata portal: {portal_url}")
         
         try:
-            # Get all datasets
             datasets_url = f"{portal_url.rstrip('/')}/api/views.json"
             response = self.session.get(datasets_url, timeout=10)
             response.raise_for_status()
@@ -337,7 +313,6 @@ class DataPortalDiscovery:
             datasets = response.json()
             print(f"Found {len(datasets)} datasets")
             
-            # Search for 311 datasets
             for dataset in datasets:
                 name = dataset.get("name", "").lower()
                 description = dataset.get("description", "").lower()
@@ -361,13 +336,10 @@ class DataPortalDiscovery:
         print(f"Searching ArcGIS portal: {portal_url}")
         
         try:
-            # Get services list
             services_url = f"{portal_url.rstrip('/')}/arcgis/rest/services"
             response = self.session.get(services_url, timeout=10)
             response.raise_for_status()
             
-            # Parse services and look for 311-related ones
-            # This is simplified - ArcGIS discovery is more complex
             print("ArcGIS discovery not fully implemented")
             return None
             

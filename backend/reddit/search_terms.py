@@ -5,7 +5,6 @@ import random
 
 def get_search_terms(city: str) -> list:
     """Get optimized search terms for Reddit scraping"""
-    # Natural search terms that sound like how people actually talk
     search_terms = [
         f"cool%20places%20{city.lower()}",
         f"fun%20things%20to%20do%20{city.lower()}",

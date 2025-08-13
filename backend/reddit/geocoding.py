@@ -37,7 +37,6 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
     print(f"🗺️ ===== STARTING GEOCODING FOR: {poi_name} =====")
     print(f"📍 Target city: {city}, {province}, {country}")
     
-    # Step 1: Try Serper KnowledgeGraph first (most reliable)
     try:
         print(f"🔍 STEP 1: Checking Serper KnowledgeGraph for {poi_name}...")
         search_query = f'"{poi_name}" "{city}"'
@@ -47,7 +46,6 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
             address = search_results["knowledgeGraph"]["address"]
             print(f"✅ KnowledgeGraph found address: {address}")
             
-            # Try to geocode this address
             coords = geocode_address(address, city, province, country)
             if coords:
                 return coords
@@ -57,7 +55,6 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
     except Exception as e:
         print(f"❌ KnowledgeGraph search error: {e}")
     
-    # Step 2: Try site-specific Serper searches for structured addresses
     try:
         print(f"🔍 STEP 2: Using site-specific Serper searches...")
         site_queries = [
@@ -78,16 +75,13 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
             if search_results.get("organic") and len(search_results["organic"]) > 0:
                 print(f"✅ Site search {i+1} returned {len(search_results['organic'])} results")
                 
-                # Extract addresses from snippets using regex
-                for result in search_results["organic"][:2]:  # Top 2 results per site
+                for result in search_results["organic"][:2]:
                     snippet = result.get("snippet", "")
                     title = result.get("title", "")
                     link = result.get("link", "")
                     
-                    # Combine text for address extraction
                     text = f"{title} {snippet}"
                     
-                    # Extract addresses using regex
                     import re
                     address_pattern = r"\d{1,5}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Lane|Ln|Way|Court|Ct|Crescent|Cres|Place|Pl|Terrace|Ter|Circle|Cir|Square|Sq|Parkway|Pkwy)"
                     addresses = re.findall(address_pattern, text, re.IGNORECASE)
@@ -97,7 +91,6 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
                             candidate_addresses.append(addr)
                             print(f"    📍 Found candidate address: {addr}")
                 
-                # Also try to scrape the actual page HTML for addresses
                 if search_results["organic"]:
                     try:
                         import requests
@@ -113,10 +106,9 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
                             soup = BeautifulSoup(response.text, 'html.parser')
                             page_text = soup.get_text()
                             
-                            # Extract addresses from page HTML
                             html_addresses = re.findall(address_pattern, page_text, re.IGNORECASE)
                             
-                            for addr in html_addresses[:3]:  # Limit to first 3
+                            for addr in html_addresses[:3]:
                                 if addr not in candidate_addresses:
                                     candidate_addresses.append(addr)
                                     print(f"    📍 Found HTML address: {addr}")
@@ -126,7 +118,6 @@ def geocode_with_fallback(poi_name: str, city: str, province: str, country: str)
             else:
                 print(f"⚠️ Site search {i+1} returned no results")
         
-        # Step 3: Use LLM to rank and select the best address
         if candidate_addresses:
             print(f"🔍 STEP 3: Ranking {len(candidate_addresses)} candidate addresses...")
             
@@ -170,7 +161,6 @@ Example: If none seem right, return "NONE"
                         best_address = candidate_addresses[best_index]
                         print(f"✅ LLM selected best address: {best_address}")
                         
-                        # Try to geocode this address
                         coords = geocode_address(best_address, city, province, country)
                         if coords:
                             return coords
@@ -184,17 +174,15 @@ Example: If none seem right, return "NONE"
     except Exception as e:
         print(f"❌ Site-specific search error: {e}")
     
-    # Step 4: Fallback to Google Places with business name (like Google Earth)
     try:
         print(f"🔍 STEP 4: Trying Google Places API with business name...")
         google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
         if google_api_key:
-            # Try multiple search strategies like Google Earth does
             search_strategies = [
-                f'"{poi_name}" {city}',  # Exact business name + city
-                f'{poi_name} restaurant {city}',  # Add category context
-                f'{poi_name} {city} address',  # Explicitly ask for address
-                f'{poi_name} {city} location'  # Ask for location
+                f'"{poi_name}" {city}',
+                f'{poi_name} restaurant {city}',
+                f'{poi_name} {city} address',
+                f'{poi_name} {city} location'
             ]
             
             for i, search_input in enumerate(search_strategies):
@@ -230,7 +218,6 @@ Example: If none seem right, return "NONE"
                     print(f"    📍 Place ID: {place_id}")
                     print(f"    📍 Coordinates: ({lat}, {lng})")
                     
-                    # Check if this looks like the right business (like Google Earth does)
                     is_likely_correct = (
                         poi_name.lower() in place_name.lower() or 
                         place_name.lower() in poi_name.lower() or
@@ -243,15 +230,14 @@ Example: If none seem right, return "NONE"
                             return {"lat": lat, "lng": lng}
                         else:
                             print(f"⚠️ Google Places found correct business but outside city bounds: ({lat}, {lng})")
-                            # Still return it if it's the right business, just warn
                             print(f"✅ Returning coordinates anyway since business name matches: ({lat}, {lng})")
                             return {"lat": lat, "lng": lng}
                     else:
                         print(f"⚠️ Google Places found different business: {place_name}")
-                        continue  # Try next search strategy
+                        continue
                 else:
                     print(f"❌ Google Places search {i+1} failed: {result.get('status')} - {result.get('error_message', 'No error message')}")
-                    continue  # Try next search strategy
+                    continue
             
             print("❌ All Google Places search strategies failed")
         else:
@@ -260,7 +246,6 @@ Example: If none seem right, return "NONE"
     except Exception as e:
         print(f"❌ Google Places geocoding error: {e}")
     
-    # Step 5: Final fallback to OpenStreetMap
     try:
         print(f"🔍 STEP 5: Trying OpenStreetMap (Nominatim)...")
         search_query = f"{poi_name}, {city}, {province}, {country}"
@@ -312,7 +297,6 @@ def geocode_address(address: str, city: str, province: str, country: str) -> Opt
     """Helper function to geocode a specific address"""
     print(f"    🗺️ Geocoding address: {address}")
     
-    # Try Google Places first
     try:
         google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
         if google_api_key:
@@ -343,7 +327,6 @@ def geocode_address(address: str, city: str, province: str, country: str) -> Opt
     except Exception as e:
         print(f"    ❌ Google Places geocoding error: {e}")
     
-    # Try OpenStreetMap
     try:
         search_query = f"{address}, {city}, {province}, {country}"
         

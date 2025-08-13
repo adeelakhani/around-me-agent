@@ -15,7 +15,6 @@ async def get_reddit_pois(city: str, province: str, country: str, user_lat: floa
     print("=" * 50)
     
     try:
-        # Use the direct Reddit scraper
         reddit_pois = await get_reddit_pois_direct(city, province, country, user_lat, user_lon)
         
         if reddit_pois:
