@@ -1,6 +1,6 @@
 # AroundMe Agent
 
-A sophisticated AI-powered location discovery platform that combines multiple data sources to provide real-time insights about interesting places, events, and activities in any city. Built with modern AI agents, web scraping, and interactive mapping.
+A sophisticated AI-powered location discovery platform that combines multiple data sources to provide real-time insights about interesting places, events, and activities in any city or YOUR current city(based off of your location). Built with modern AI agents, web scraping, and interactive mapping.
 
 ## Overview
 
@@ -19,7 +19,7 @@ AroundMe Agent employs a sophisticated multi-layered architecture that combines 
 
 ### AI Agent Orchestration
 
-The system uses **LangGraph** to orchestrate complex AI workflows that can adapt and make intelligent decisions in real-time. Each data source is processed through specialized AI agents:
+The system uses **LangGraph/LangChain** to orchestrate complex AI workflows that can adapt and make intelligent decisions in real-time. Each data source is processed through specialized AI agents:
 
 1. **Reddit Community Intelligence Agent**
    - Navigates Reddit using browser automation (Playwright)
@@ -203,17 +203,16 @@ Create `.env` in the backend directory:
 OPENAI_API_KEY=your_openai_api_key
 MAPBOX_ACCESS_TOKEN=your_mapbox_access_token
 
-# Optional (for enhanced functionality)
 SERPER_API_KEY=your_serper_api_key
 GOOGLE_PLACES_API_KEY=your_google_places_api_key
 NEWS_API_KEY=your_news_api_key
 TICKETMASTER_API_KEY=your_ticketmaster_api_key
 
-# Application Configuration
-ENVIRONMENT=development
-DEBUG=true
-LOG_LEVEL=INFO
-```
+# Set up LangSmith for tracking
+LANGSMITH_TRACING=
+LANGSMITH_ENDPOINT=
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=
 
 Create `.env.local` in the client directory:
 
@@ -243,258 +242,5 @@ npm run dev
 ```
 
 The application will be available at `http://localhost:3000`
-
-### Production
-
-#### Build Frontend
-
-```bash
-cd client
-npm run build
-npm start
-```
-
-#### Deploy Backend
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn server:app --host 0.0.0.0 --port 8000
-```
-
-## API Documentation
-
-### Endpoints
-
-#### GET `/api/locations`
-
-Retrieve Points of Interest for a specific location.
-
-**Parameters:**
-- `lat` (float): Latitude coordinate
-- `lon` (float): Longitude coordinate
-
-**Response:**
-```json
-[
-  {
-    "name": "Pizza Place",
-    "lat": 43.6532,
-    "lng": -79.3832,
-    "summary": "Great pizza with authentic Italian style",
-    "type": "reddit",
-    "radius": 20
-  }
-]
-```
-
-### Data Types
-
-- **reddit**: Community recommendations from Reddit
-- **news**: Current events and local news
-- **event**: Upcoming events and activities
-- **311_service**: Municipal service requests
-
-## Project Structure
-
-```
-aroundme-agent/
-├── backend/
-│   ├── agents/
-│   │   ├── reddit_scraper.py      # LangGraph Reddit scraping agent
-│   │   ├── news_scraper.py        # News aggregation agent
-│   │   ├── municipal_api_discovery.py  # 311 services agent
-│   │   └── data_portal_discovery.py    # Data portal agent
-│   ├── reddit/
-│   │   ├── models.py              # Pydantic data models
-│   │   ├── geocoding.py           # Multi-source geocoding
-│   │   ├── url_extraction.py      # URL extraction utilities
-│   │   └── search_terms.py        # Search term management
-│   ├── routes/
-│   │   └── locations.py           # API endpoints
-│   ├── utils/
-│   │   └── location.py            # Location utilities
-│   ├── tests/                     # Test files
-│   ├── server.py                  # FastAPI application
-│   └── requirements.txt           # Python dependencies
-├── client/
-│   ├── src/
-│   │   └── app/
-│   │       ├── page.tsx           # Main application component
-│   │       ├── layout.tsx         # Application layout
-│   │       └── globals.css        # Global styles
-│   ├── public/                    # Static assets
-│   ├── package.json               # Node.js dependencies
-│   └── next.config.ts             # Next.js configuration
-└── README.md                      # This file
-```
-
-## AI Agent Workflows
-
-### Reddit Scraper Agent
-
-The Reddit scraper uses a sophisticated LangGraph workflow:
-
-1. **scrape_reddit_node**: Navigate to Reddit and extract content using browser automation
-2. **tools_node**: Execute browser tools (navigation, text extraction)
-3. **extract_pois_node**: Analyze content with AI to find places mentioned
-4. **geocode_pois_node**: Get coordinates for each discovered place
-
-**State Flow:**
-```
-Initial State → Scrape Reddit → Extract POIs → Geocode → Final Results
-```
-
-### Key Features
-
-- **Conditional Routing**: Smart workflow decisions based on AI analysis
-- **Browser Automation**: Real-time web scraping with Playwright
-- **Structured Output**: Type-safe data with Pydantic models
-- **Multi-source Geocoding**: Fallback strategies for location accuracy
-
-## Development
-
-### Adding New Data Sources
-
-1. Create a new agent in `backend/agents/`
-2. Implement the LangGraph workflow
-3. Add the data source to `backend/routes/locations.py`
-4. Update the frontend to handle the new data type
-
-### Extending Geocoding
-
-The geocoding system supports multiple providers:
-
-```python
-# Add new geocoding provider
-def geocode_with_new_provider(poi_name: str, city: str) -> Optional[Dict]:
-    # Implementation
-    pass
-
-# Integrate into fallback system
-coords = geocode_with_fallback(poi_name, city, province, country)
-```
-
-### Customizing the Map
-
-The frontend uses Mapbox GL with custom styling:
-
-```typescript
-// Custom map style
-const mapStyle = 'mapbox://styles/your-username/your-style-id'
-
-// Custom markers
-const markerEl = document.createElement('div')
-markerEl.style.background = `radial-gradient(...)`
-```
-
-## Testing
-
-### Backend Tests
-
-```bash
-cd backend
-python -m pytest tests/
-```
-
-### Frontend Tests
-
-```bash
-cd client
-npm test
-```
-
-### Manual Testing
-
-1. Start both servers
-2. Navigate to `http://localhost:3000`
-3. Click on map markers to test recent activity
-4. Use filters to test different data types
-5. Check browser console for debug information
-
-## Performance Considerations
-
-### Backend Optimization
-
-- **Async Operations**: All I/O operations are asynchronous
-- **Caching**: Implement Redis for API response caching
-- **Rate Limiting**: Add rate limiting for external APIs
-- **Connection Pooling**: Use connection pools for database operations
-
-### Frontend Optimization
-
-- **Code Splitting**: Next.js automatic code splitting
-- **Image Optimization**: Next.js automatic image optimization
-- **Bundle Analysis**: Use `npm run build` to analyze bundle size
-- **Lazy Loading**: Implement lazy loading for map components
-
-## Deployment
-
-### Docker Deployment
-
-```dockerfile
-# Backend Dockerfile
-FROM python:3.9-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-```dockerfile
-# Frontend Dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build
-CMD ["npm", "start"]
-```
-
-### Environment-Specific Configuration
-
-- **Development**: Use `.env.local` for local development
-- **Staging**: Use environment variables in deployment platform
-- **Production**: Use secure environment variable management
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript best practices
-- Use Pydantic for data validation
-- Implement comprehensive error handling
-- Add tests for new features
-- Update documentation for API changes
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- **LangGraph** for AI workflow orchestration
-- **Playwright** for browser automation
-- **Mapbox** for mapping services
-- **OpenAI** for AI capabilities
-- **FastAPI** for high-performance API framework
-
-## Support
-
-For support and questions:
-
-- Create an issue in the repository
-- Check the documentation in `/docs`
-- Review the test files for usage examples
-
----
 
 Built with modern AI technologies and best practices for scalable, maintainable code.
