@@ -512,7 +512,8 @@ export default function HomePage() {
         loc.lat !== location.lat || loc.lng !== location.lng || loc.name !== location.name
       );
       // Add to beginning and keep only last 3
-      return [location, ...filtered].slice(0, 3);
+      const newRecent = [location, ...filtered].slice(0, 3);
+      return newRecent;
     });
   };
 
@@ -704,8 +705,8 @@ export default function HomePage() {
 
       markerEl.addEventListener('click', (e) => {
         e.stopPropagation()
-        console.log('Marker clicked:', location.name)
         setSelectedLocation(location)
+        addToRecent(location)  // ✅ Add this line to track recent activity
       })
     })
   }
@@ -763,7 +764,7 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="text-gray-900 text-lg font-light mb-3 tracking-tight">Loading Toronto</div>
+              <div className="text-gray-900 text-lg font-light mb-3 tracking-tight">Loading</div>
               <div className="text-gray-400 text-sm font-light tracking-wide">Discovering local insights</div>
             </div>
           </div>
