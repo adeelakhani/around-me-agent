@@ -618,7 +618,6 @@ export default function HomePage() {
     // Use current coordinates as the center
     const coords = getCurrentCoordinates();
     console.log('Initializing map with coordinates:', coords);
-    fetchLocations(coords.lat, coords.lng);
     initializeMap(coords.lng, coords.lat);
   }, []);
 
@@ -843,10 +842,10 @@ export default function HomePage() {
               />
             </svg>
           </div>
-          <h1 className="text-xl font-light text-gray-900 mb-3 tracking-tight">Connection Error</h1>
-          <p className="text-gray-500 mb-8 font-light leading-relaxed">{error}</p>
+          <h1 className="text-xl font-light text-white mb-3 tracking-tight">Connection Error</h1>
+          <p className="text-white mb-8 font-light leading-relaxed">{error}</p>
           <button
-            onClick={() => fetchLocations(TORONTO_LAT, TORONTO_LNG)}
+            onClick={() => window.location.reload()}
             className="px-8 py-4 bg-black text-white rounded-2xl hover:bg-gray-800 transition-all duration-300 font-light tracking-wide cursor-pointer"
           >
             Try Again
