@@ -12,475 +12,13 @@ import os
 import random
 from dotenv import load_dotenv
 
-from reddit.models import POI, POIList, POIOutput, Coordinates, EnhancedPOI, EnhancedPOIList
-from reddit.geocoding import search_serper, geocode_with_fallback
-from reddit.url_extraction import extract_reddit_post_urls_from_playwright
+from reddit.models import POI, POIList
+from reddit.geocoding import geocode_with_fallback
+from reddit.url_extraction import extract_reddit_post_urls_from_playwright, extract_reddit_post_urls_from_text
 from reddit.search_terms import get_random_search_term
-from utils.location import is_coordinates_in_city
 
 load_dotenv(override=True)
 nest_asyncio.apply()
-
-class State(TypedDict):
-    messages: Annotated[List[Any], add_messages]
-    location_data: Dict
-    reddit_data: List[Dict]
-    current_step: Optional[str]
-    pois: Optional[List[Dict]]
-    subreddit: Optional[str]
-    scraped_content: Optional[str]
-    extracted_pois: Optional[List[POI]]
-    city: Optional[str]
-
-def create_reddit_scraper_agent(subreddit=None, city=None):
-    if not subreddit and city:
-        subreddit = city.lower()
-    elif not subreddit:
-        subreddit = "toronto"
-    if not city:
-        city = "Toronto"
-    
-    print(f"Creating LangGraph Reddit scraper for r/{subreddit} in {city}...")
-    print(f"🔍 Target subreddit: r/{subreddit}")
-    print(f"🌍 Target city: {city}")
-    
-    from langchain_community.tools.playwright.utils import create_async_playwright_browser
-    async_browser = create_async_playwright_browser(headless=False)
-    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=async_browser)
-    tools = toolkit.get_tools()
-    print(f"Got {len(tools)} Playwright tools: {[tool.name for tool in tools]}")
-    
-    llm = ChatOpenAI(model="gpt-4o-mini")
-    llm_with_tools = llm.bind_tools(tools)
-    llm_with_structured_output = llm.with_structured_output(POIList)
-    llm_with_poi_output = llm.with_structured_output(POIOutput)
-    
-    def scrape_reddit_node(state: State) -> Dict[str, Any]:
-        """Node to scrape Reddit content using browser tools"""
-        try:
-            subreddit = state.get("subreddit", city.lower())
-            city = state.get('city', 'Unknown City')
-            
-            system_message = f"""You are a Reddit scraping expert. Your job is to search for posts about things to do and places to visit.
-
-CRITICAL INSTRUCTIONS:
-1. You MUST use the navigate_browser tool to go to Reddit
-2. You MUST use the extract_text tool to get content from the page
-3. Search for posts about things to do, places to visit, attractions, activities
-4. Extract ALL text content including post titles, comments, and recommendations
-5. If the page doesn't load or has no content, extract whatever you can find
-6. Focus on finding SPECIFIC place names, business names, and locations that people recommend
-
-You MUST use BOTH browser tools in sequence: first navigate_browser, then extract_text.
-Do not respond without using both tools."""
-            
-            search_term = get_random_search_term(city)
-            
-            user_message = f"""Navigate to https://old.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all
-
-Then extract ALL text content from the page, including:
-- Post titles and content
-- Comments and recommendations
-- Any specific place names, business names, or venues mentioned
-
-Use the extract_text tool to get everything you can see. If the page is empty or doesn't load, extract whatever text is available.
-
-IMPORTANT: You must call extract_text after navigating to get the page content."""
-            
-            messages = [
-                SystemMessage(content=system_message),
-                HumanMessage(content=user_message)
-            ]
-            
-            import datetime
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"🕐 [{current_time}] Scraping r/{subreddit} for places...")
-            print(f"🔍 Using search term: {search_term}")
-            print(f"🌐 Navigating to: https://old.reddit.com/r/{subreddit}/search/?q={search_term}&restrict_sr=on&sort=relevance&t=all")
-            
-            response = llm_with_tools.invoke(messages)
-            
-            if hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"✅ Used {len(response.tool_calls)} browser tools:")
-                for tool_call in response.tool_calls:
-                    tool_name = tool_call.get('name', 'unknown')
-                    print(f"   - {tool_name}")
-            else:
-                print("⚠️ No browser tools used - this might be cached data!")
-            
-            if hasattr(response, 'content') and response.content:
-                scraped_text = response.content[:500]
-                print(f"📄 Scraped content preview: {scraped_text}...")
-                print(f"📊 Content length: {len(response.content)} characters")
-                
-                reddit_indicators = ['reddit.com', 'r/', 'upvote', 'downvote', 'comment', 'post']
-                has_reddit_content = any(indicator in response.content.lower() for indicator in reddit_indicators)
-                if has_reddit_content:
-                    print("✅ Content contains Reddit-specific elements - real scraping confirmed!")
-                else:
-                    print("⚠️ Content doesn't seem to be from Reddit - might be cached/static data")
-            else:
-                print("❌ No content scraped!")
-            
-            return {
-                "messages": [response],
-                "current_step": "extract_pois"
-            }
-        except Exception as e:
-            print(f"Error in scrape_reddit_node: {e}")
-            return {
-                "messages": [HumanMessage(content=f"Error scraping Reddit: {str(e)}")],
-                "current_step": "extract_pois"
-            }
-    
-    def extract_pois_node(state: State) -> Dict[str, Any]:
-        """Node to extract POIs from scraped content using structured output"""
-        messages = state.get("messages", [])
-        city = state.get('city', 'Unknown City')
-        
-        scraped_content = ""
-        for msg in reversed(messages):
-            if hasattr(msg, 'content') and msg.content:
-                scraped_content = msg.content
-                break
-        
-        if not scraped_content:
-            print("No scraped content found")
-            return {
-                "extracted_pois": [],
-                "current_step": "geocode_pois",
-                "messages": [HumanMessage(content="No content found to extract POIs from")]
-            }
-        
-        print(f"📄 Processing {len(scraped_content)} characters of Reddit content")
-        print(f"🔍 Content preview: {scraped_content[:500]}...")
-        
-        reddit_indicators = ['reddit.com', 'r/', 'upvote', 'downvote', 'comment', 'post', 'OP', 'edit:', 'deleted']
-        has_reddit_content = any(indicator in scraped_content.lower() for indicator in reddit_indicators)
-        if has_reddit_content:
-            print("✅ Content contains Reddit-specific elements - authentic content detected!")
-        else:
-            print("⚠️ Content doesn't seem to be from Reddit - might be cached/static data")
-            print("❌ Skipping POI extraction - no authentic Reddit content found")
-            return {
-                "extracted_pois": [],
-                "current_step": "geocode_pois",
-                "messages": [HumanMessage(content="No authentic Reddit content found - skipping POI extraction")]
-            }
-        
-
-        
-        system_message = f"""You are analyzing Reddit content to find COOL PLACES that people recommend visiting.
-
-GOAL: Find all the interesting, fun, and cool places that Reddit users recommend visiting.
-
-IMPORTANT: Extract ALL places that are mentioned positively in the provided Reddit content, especially places that people recommend or say are cool/fun.
-Be thorough and comprehensive - look for any place names, businesses, attractions, neighborhoods, etc. that people talk about positively.
-
-Extract ALL COOL PLACES mentioned in the content, including:
-- Restaurants, cafes, bars, food spots that people recommend
-- Museums, galleries, cultural venues that people say are interesting
-- Parks, trails, outdoor spaces that people recommend
-- Shopping centers, markets, boutiques that people mention positively
-- Entertainment venues, theaters, cinemas that people recommend
-- Tourist attractions, landmarks that people say are worth visiting
-- Local businesses and services that people recommend
-- Neighborhoods, districts, areas that people mention positively
-- Any specific place names with locations that people talk about positively
-
-For each place, provide:
-1. The exact name as mentioned
-2. A brief description based on what's said about it
-3. The category
-4. The specific Reddit context where it's mentioned
-
-Be comprehensive - extract as many cool places as you can find mentioned in the content."""
-        
-        user_message = f"""Find ALL COOL PLACES that people recommend visiting.
-
-Here is the Reddit content to analyze:
-
-{scraped_content[:12000]}
-
-Extract ALL COOL PLACES mentioned in this content, including:
-- Restaurants, cafes, bars, food spots that people recommend
-- Museums, galleries, cultural venues that people say are interesting
-- Parks, trails, outdoor spaces that people recommend
-- Shopping centers, markets, boutiques that people mention positively
-- Entertainment venues, theaters, cinemas that people recommend
-- Tourist attractions, landmarks that people say are worth visiting
-- Local businesses and services that people recommend
-- Neighborhoods, districts, areas that people mention positively
-- Any specific place names with locations that people talk about positively
-
-For each place, provide:
-1. The exact name as mentioned
-2. A brief description based on what's said about it
-3. The category
-4. The specific Reddit context where it's mentioned
-
-Be comprehensive - extract as many cool places as you can find mentioned in the content."""
-        
-        messages = [
-            SystemMessage(content=system_message),
-            HumanMessage(content=user_message)
-        ]
-        
-        try:
-            response = llm_with_structured_output.invoke(messages)
-            pois = response.pois
-            print(f"Extracted {len(pois)} POIs: {[poi.name for poi in pois]}")
-            
-
-            
-            return {
-                "extracted_pois": pois,
-                "current_step": "geocode_pois",
-                "messages": [HumanMessage(content=f"Extracted {len(pois)} POIs")]
-            }
-        except Exception as e:
-            print(f"Error extracting POIs: {e}")
-            return {
-                "extracted_pois": [],
-                "current_step": "geocode_pois",
-                "messages": [HumanMessage(content="Error extracting POIs")]
-            }
-    
-    def geocode_pois_node(state: State) -> Dict[str, Any]:
-        """Node to geocode POIs and create final POI objects"""
-        try:
-            pois = state.get("extracted_pois", [])
-            subreddit = state.get("subreddit", "askTO")
-            city = state.get('city', 'Unknown City')
-            
-            location_data = state.get('location_data', {})
-            province = location_data.get('province', 'Ontario')
-            country = location_data.get('country', 'Canada')
-            location_name = location_data.get('name', f"{city}, {province}")
-            
-            final_pois = []
-            
-            print(f"🗺️ Processing {len(pois)} POIs for geocoding...")
-            
-            for poi in pois:
-                print(f"📍 Getting coordinates for: {poi.name}")
-                
-                try:
-                    print(f"🗺️ Geocoding {poi.name}...")
-                    coords = geocode_with_fallback(poi.name, city, province, country)
-                    
-                    if coords:
-                        coords['address'] = f"{poi.name}, {city}"
-                        print(f"✅ OpenStreetMap geocoding successful for {poi.name}: ({coords['lat']}, {coords['lng']})")
-                    else:
-                        print(f"❌ OpenStreetMap failed for {poi.name}, trying Serper...")
-                        
-                        country = location_data.get('country', 'Canada')
-                        province = location_data.get('province', 'Ontario')
-                        
-                        search_queries = [
-                            f'"{poi.name}" "{city}" address location coordinates',
-                            f'"{poi.name}" "{city}" exact address street number',
-                            f'"{poi.name}" "{city}" map location GPS coordinates',
-                            f'"{poi.name}" "{city}" business address phone number'
-                        ]
-                        
-                        search_results = None
-                        search_text = ""
-                        
-                        for i, search_query in enumerate(search_queries):
-                            print(f"🔍 Serper search attempt {i+1}: {search_query}")
-                            search_results = search_serper(search_query)
-                            
-                            if search_results.get("organic") and len(search_results["organic"]) > 0:
-                                print(f"✅ Serper search {i+1} returned {len(search_results['organic'])} results")
-                                break
-                            else:
-                                print(f"⚠️ Serper search {i+1} returned no results, trying next query...")
-                        
-                        if not search_results:
-                            print(f"❌ All Serper search queries failed for {poi.name}")
-                            continue
-                        
-                        search_text = ""
-                        if search_results.get("organic"):
-                            for result in search_results["organic"][:3]:
-                                search_text += f"Title: {result.get('title', '')}\n"
-                                search_text += f"Snippet: {result.get('snippet', '')}\n\n"
-                        
-                        if search_results.get("knowledgeGraph"):
-                            kg = search_results["knowledgeGraph"]
-                            search_text += f"Knowledge Graph: {kg.get('title', '')}\n"
-                            search_text += f"Description: {kg.get('description', '')}\n"
-                            if kg.get("attributes"):
-                                search_text += f"Attributes: {kg.get('attributes')}\n"
-                        
-                        print(f"📝 Serper search results: {search_text[:200]}...")
-                        
-                        llm_with_coords = llm.with_structured_output(Coordinates)
-                        
-                        coord_response = llm_with_coords.invoke([
-                            SystemMessage(content="""Extract EXACT latitude and longitude coordinates for the specific place.
-
-LOOK FOR:
-- GPS coordinates like "43.6532, -79.3832" or "43°39'11.5"N 79°22'59.9"W"
-- Address with street number and name
-- "Located at" or "Address:" followed by coordinates
-- Google Maps links with coordinates
-- Business listings with exact addresses
-
-ONLY return coordinates if they are SPECIFICALLY for the exact place mentioned.
-If coordinates are for general city area, return 0.0, 0.0"""),
-                            HumanMessage(content=search_text)
-                        ])
-                        
-                        if coord_response.lat != 0.0 and coord_response.lng != 0.0:
-                            if is_coordinates_in_city(coord_response.lat, coord_response.lng, city):
-                                coords = {
-                                    'lat': coord_response.lat,
-                                    'lng': coord_response.lng,
-                                    'address': f"{poi.name}, {city}"
-                                }
-                                print(f"✅ Serper found coordinates for {poi.name}: ({coords['lat']}, {coords['lng']}) - VALIDATED")
-                            else:
-                                print(f"❌ Serper coordinates for {poi.name} are outside {city} bounds - REJECTED")
-                                coords = None
-                                continue
-                        else:
-                            print(f"❌ No coordinates found for {poi.name} with Serper")
-                            coords = None
-                            continue
-                    
-                except Exception as e:
-                    print(f"❌ Error getting coordinates for {poi.name}: {e}")
-                    coords = None
-                    continue
-                
-                if coords:
-
-                    
-                    try:
-                        print(f"📝 Creating summary for {poi.name} from Reddit context...")
-                        
-                        if hasattr(poi, 'reddit_context') and poi.reddit_context:
-                            context = poi.reddit_context.strip()
-                            
-                            context = re.sub(r'\[.*?\]', '', context)
-                            context = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', context)
-                            
-                            if len(context) > 200:
-                                context = context[:197] + "..."
-                            
-                            summary = context
-                        else:
-                            summary = f"Popular {poi.category.lower()} mentioned in r/{subreddit} discussions"
-                        
-                        print(f"📝 Created summary for {poi.name}: {summary[:100]}...")
-                        
-                        poi_output = POIOutput(
-                            name=poi.name,
-                            lat=coords['lat'],
-                            lng=coords['lng'],
-                            summary=summary,
-                            type="reddit",
-                            radius=20
-                        )
-                        
-                        final_pois.append(poi_output.model_dump())
-                        print(f"✅ Created POI: {poi.name} at ({coords['lat']}, {coords['lng']})")
-                        
-                    except Exception as e:
-                        print(f"❌ Error creating POI summary for {poi.name}: {e}")
-                        
-                        poi_output = POIOutput(
-                            name=poi.name,
-                            lat=coords['lat'],
-                            lng=coords['lng'],
-                            summary=f"Popular {poi.category.lower()} in {city}",
-                            type="reddit", 
-                            radius=20
-                        )
-                        final_pois.append(poi_output.model_dump())
-                        print(f"✅ Created fallback POI for {poi.name}")
-                else:
-                    print(f"❌ Could not geocode: {poi.name}")
-            
-            print(f"🎯 Final result: Created {len(final_pois)} POIs")
-            
-            return {
-                "pois": final_pois,
-                "current_step": "complete",
-                "messages": [HumanMessage(content=f"Created {len(final_pois)} POIs")]
-            }
-        except Exception as e:
-            print(f"Error in geocode_pois_node: {e}")
-            return {
-                "pois": [],
-                "current_step": "complete",
-                "messages": [HumanMessage(content=f"Error geocoding POIs: {str(e)}")]
-            }
-    
-    def tools_condition(state: State) -> str:
-        """Determine if we need to use tools or move to next step"""
-        try:
-            last_message = state["messages"][-1] if state.get("messages") else None
-            current_step = state.get("current_step", "scrape_reddit")
-            
-            print(f"Tools condition - Current step: {current_step}")
-            
-            if last_message and hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                print("Has tool calls, going to tools")
-                return "tools"
-            
-            if current_step == "scrape_reddit":
-                print("Moving to extract_pois")
-                return "extract_pois"
-            elif current_step == "extract_pois":
-                print("Moving to geocode_pois")
-                return "geocode_pois"
-            else:
-                print("Ending workflow")
-                return END
-        except Exception as e:
-            print(f"Error in tools_condition: {e}")
-            return END
-    
-    def route_after_tools(state: State) -> str:
-        """Route after tools have been executed"""
-        try:
-            current_step = state.get("current_step", "scrape_reddit")
-            print(f"Route after tools - Current step: {current_step}")
-            
-            if current_step == "scrape_reddit":
-                print("Moving to extract_pois after tools")
-                return "extract_pois"
-            else:
-                print("Ending workflow after tools")
-                return END
-        except Exception as e:
-            print(f"Error in route_after_tools: {e}")
-            return END
-    
-    workflow = StateGraph(State)
-    
-    workflow.add_node("scrape_reddit", scrape_reddit_node)
-    workflow.add_node("tools", ToolNode(tools=tools))
-    workflow.add_node("extract_pois", extract_pois_node)  
-    workflow.add_node("geocode_pois", geocode_pois_node)
-    
-    workflow.add_conditional_edges("scrape_reddit", tools_condition, {
-        "tools": "tools",
-        "extract_pois": "extract_pois"
-    })
-    
-    workflow.add_edge("tools", "extract_pois")
-    workflow.add_edge("extract_pois", "geocode_pois")
-    workflow.add_edge("geocode_pois", END)
-    
-    workflow.set_entry_point("scrape_reddit")
-    
-    print("LangGraph workflow compiled successfully!")
-    return workflow.compile()
 
 async def get_reddit_pois_direct(city: str, province: str, country: str, lat: float, lng: float) -> list:
     """Direct Reddit scraper using LangGraph with proper async browser tools"""
@@ -609,7 +147,10 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
                 
                 if filtered_urls:
                     print(f"✅ Found {len(filtered_urls)} Reddit post URLs from r/{state['subreddit']}")
-                    candidate_urls = filtered_urls[:10]
+                    # Remove duplicates and take first 10 unique URLs
+                    unique_urls = list(dict.fromkeys(filtered_urls))  # Preserves order while removing duplicates
+                    candidate_urls = unique_urls[:10]
+                    print(f"🔍 After deduplication: {len(candidate_urls)} unique URLs")
                 else:
                     print(f"❌ No URLs found from r/{state['subreddit']} after filtering")
                     candidate_urls = []
@@ -623,6 +164,7 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
                 - Discussions about fun areas, neighborhoods, or spots
                 - User experiences and recommendations about places they enjoyed
                 - Local insights about interesting locations
+                - Also posts that mention nice views and places to see the city
                 
                 Here are the Reddit post URLs to analyze:
                 {chr(10).join([f"{i+1}. {url}" for i, url in enumerate(candidate_urls)])}
@@ -648,10 +190,16 @@ async def get_reddit_pois_direct(city: str, province: str, country: str, lat: fl
                     selected_numbers = re.findall(r'\d+', response_text)
                     selected_indices = [int(num) - 1 for num in selected_numbers if 0 <= int(num) - 1 < len(candidate_urls)]
                     
-                    selected_indices = list(set(selected_indices))[:5]
+                    selected_indices = list(set(selected_indices))[:5]  # Remove duplicates and limit to 5
                     
                     if selected_indices:
                         selected_urls = [candidate_urls[i] for i in selected_indices]
+                        # Double-check for duplicates in selected URLs
+                        unique_selected_urls = list(dict.fromkeys(selected_urls))
+                        if len(unique_selected_urls) < len(selected_urls):
+                            print(f"⚠️ Removed {len(selected_urls) - len(unique_selected_urls)} duplicate URLs from selection")
+                            selected_urls = unique_selected_urls
+                        
                         print(f"✅ LLM selected {len(selected_urls)} most relevant URLs:")
                         for i, url in enumerate(selected_urls):
                             print(f"  {i+1}. {url}")
@@ -925,43 +473,49 @@ Extract AT LEAST 15-20 places if possible. Be comprehensive and thorough.""")
                     import re
                     
                     context = poi.reddit_context.strip()
-                    context = re.sub(r'\[.*?\]', '', context)
-                    context = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', context)
+                    context = re.sub(r'\[.*?\]', '', context)  # Remove Reddit formatting like [text]
+                    context = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', context)  # Remove URLs
                     
-                    sentences = re.split(r'[.!?]+', context)
-                    best_sentence = None
+                    # COMMENTED OUT: Sentence splitting logic - using full context instead
+                    # sentences = re.split(r'[.!?]+', context)
+                    # best_sentence = None
+                    # 
+                    # for sentence in sentences:
+                    #     sentence = sentence.strip()
+                    #     if len(sentence) < 15 or len(sentence) > 150:
+                    #         continue
+                    #         
+                    #     ui_words = ['permalink', 'embed', 'save', 'parent', 'report', 'track', 'reply', 'share', 'more', 'replies', 'sort', 'best', 'top', 'new', 'controversial', 'old', 'q&a', 'open', 'comment', 'options', 'filter', 'show', 'hide', 'submit', 'edit', 'delete', 'moderators', 'rules', 'guidelines']
+                    #     if any(word in sentence.lower() for word in ui_words):
+                    #         continue
+                    #         
+                    #     descriptive_words = ['restaurant', 'cafe', 'bar', 'pub', 'park', 'museum', 'gallery', 'theater', 'cinema', 'shop', 'store', 'market', 'mall', 'attraction', 'landmark', 'venue', 'place', 'spot', 'area', 'neighborhood', 'district', 'pizza', 'food', 'drink', 'eat', 'visit', 'go', 'check out', 'try', 'recommend', 'suggest', 'good', 'great', 'amazing', 'awesome', 'excellent', 'fantastic', 'wonderful', 'best', 'love', 'like', 'worth', 'nice', 'cool', 'interesting', 'popular', 'famous', 'known for', 'favorite', 'must see', 'must visit']
+                    #     
+                    #     if any(word in sentence.lower() for word in descriptive_words):
+                    #         best_sentence = sentence
+                    #         break
+                    # 
+                    # if not best_sentence:
+                    #     for sentence in sentences:
+                    #         sentence = sentence.strip()
+                    #         if len(sentence) > 15 and len(sentence) < 100:
+                    #             if sentence.lower() != place_name.lower():
+                    #                 best_sentence = sentence
+                    #                 break
+                    # 
+                    # if best_sentence:
+                    #     poi.description = best_sentence
+                    #     print(f"✅ Created description for {place_name}: {best_sentence[:80]}...")
+                    # else:
+                    #     if len(context) > 200:
+                    #         context = context[:200] + "..."
+                    #     poi.description = context
+                    #     print(f"✅ Used context for {place_name}: {context[:80]}...")
                     
-                    for sentence in sentences:
-                        sentence = sentence.strip()
-                        if len(sentence) < 15 or len(sentence) > 150:
-                            continue
-                            
-                        ui_words = ['permalink', 'embed', 'save', 'parent', 'report', 'track', 'reply', 'share', 'more', 'replies', 'sort', 'best', 'top', 'new', 'controversial', 'old', 'q&a', 'open', 'comment', 'options', 'filter', 'show', 'hide', 'submit', 'edit', 'delete', 'moderators', 'rules', 'guidelines']
-                        if any(word in sentence.lower() for word in ui_words):
-                            continue
-                            
-                        descriptive_words = ['restaurant', 'cafe', 'bar', 'pub', 'park', 'museum', 'gallery', 'theater', 'cinema', 'shop', 'store', 'market', 'mall', 'attraction', 'landmark', 'venue', 'place', 'spot', 'area', 'neighborhood', 'district', 'pizza', 'food', 'drink', 'eat', 'visit', 'go', 'check out', 'try', 'recommend', 'suggest', 'good', 'great', 'amazing', 'awesome', 'excellent', 'fantastic', 'wonderful', 'best', 'love', 'like', 'worth', 'nice', 'cool', 'interesting', 'popular', 'famous', 'known for', 'favorite', 'must see', 'must visit']
-                        
-                        if any(word in sentence.lower() for word in descriptive_words):
-                            best_sentence = sentence
-                            break
-                    
-                    if not best_sentence:
-                        for sentence in sentences:
-                            sentence = sentence.strip()
-                            if len(sentence) > 15 and len(sentence) < 100:
-                                if sentence.lower() != place_name.lower():
-                                    best_sentence = sentence
-                                    break
-                    
-                    if best_sentence:
-                        poi.description = best_sentence
-                        print(f"✅ Created description for {place_name}: {best_sentence[:80]}...")
-                    else:
-                        if len(context) > 200:
-                            context = context[:200] + "..."
-                        poi.description = context
-                        print(f"✅ Used context for {place_name}: {context[:80]}...")
+                    if len(context) > 500:
+                        context = context[:500] + "..."
+                    poi.description = context
+                    print(f"✅ Used full context for {place_name}: {context[:80]}...")
                 
                 if hasattr(poi, 'reddit_context') and poi.reddit_context:
                     if len(poi.description) < 10 or poi.description.lower() in [
@@ -1067,36 +621,3 @@ Extract AT LEAST 15-20 places if possible. Be comprehensive and thorough.""")
         traceback.print_exc()
         return []
 
-def main():
-    city = "Toronto"
-    workflow = create_reddit_scraper_agent(city=city)
-    
-    initial_state = {
-        "subreddit": city.lower(),
-        "city": city,
-        "location_data": {
-            "city": city,
-            "province": "Unknown", 
-            "country": "Unknown"
-        },
-        "current_step": "scrape_reddit",
-        "messages": [],
-        "reddit_data": [],
-        "pois": [],
-        "scraped_content": None,
-        "extracted_pois": []
-    }
-    
-    print("Starting Reddit scraping workflow...")
-    result = workflow.invoke(initial_state)
-    
-    pois = result.get("pois", [])
-    print(f"\n✅ Generated {len(pois)} POIs:")
-    for poi in pois:
-        print(f"📍 {poi['name']}")
-        print(f"   Coordinates: ({poi['lat']}, {poi['lng']})")
-        print(f"   Summary: {poi['summary']}")
-        print()
-
-if __name__ == "__main__":
-    main()
