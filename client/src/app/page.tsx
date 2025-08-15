@@ -296,7 +296,7 @@ const LocationPopup = ({ location, onClose }: { location: Location; onClose: () 
   )
 };
 
-const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, recentLocations, onLocationSelect }: { 
+const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, recentLocations, onLocationSelect, useLiveCoordinates, onToggleLiveCoordinates, currentCity }: { 
   isOpen: boolean; 
   onToggle: () => void; 
   locations: Location[];
@@ -304,6 +304,9 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
   onFilterChange: (filters: string[]) => void;
   recentLocations: Location[];
   onLocationSelect: (location: Location) => void;
+  useLiveCoordinates: boolean;
+  onToggleLiveCoordinates: () => void;
+  currentCity: string;
 }) => {
   const locationTypes = [
     {
@@ -345,23 +348,46 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
         isOpen ? "translate-x-0" : "-translate-x-full"
       }`}
     >
-      {/* Header */}
-      <div className="p-8 border-b border-gray-50/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-light text-gray-900 tracking-tight">Insights</h2>
-            <p className="text-sm text-gray-400 mt-1 font-light tracking-wide">Toronto Data Explorer</p>
-          </div>
-          <button
-            onClick={onToggle}
-            className="w-10 h-10 bg-gray-50/50 hover:bg-gray-100/50 rounded-2xl flex items-center justify-center text-gray-400 hover:text-gray-600 transition-all duration-300 border border-gray-100/30 cursor-pointer"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          </button>
-        </div>
-      </div>
+             {/* Header */}
+       <div className="p-8 border-b border-gray-50/50">
+         <div className="flex items-center justify-between mb-4">
+           <div>
+             <h2 className="text-2xl font-light text-gray-900 tracking-tight">Insights</h2>
+             <p className="text-sm text-gray-400 mt-1 font-light tracking-wide">{currentCity} Data Explorer</p>
+           </div>
+           <button
+             onClick={onToggle}
+             className="w-10 h-10 bg-gray-50/50 hover:bg-gray-100/50 rounded-2xl flex items-center justify-center text-gray-400 hover:text-gray-600 transition-all duration-300 border border-gray-100/30 cursor-pointer"
+           >
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+             </svg>
+           </button>
+         </div>
+
+         {/* Live Coordinates Toggle */}
+         <div className="mb-4">
+           <label className="flex items-center space-x-3 cursor-pointer">
+             <div className="relative">
+               <input
+                 type="checkbox"
+                 checked={useLiveCoordinates}
+                 onChange={onToggleLiveCoordinates}
+                 className="sr-only"
+               />
+               <div className={`w-12 h-6 rounded-full transition-colors duration-300 ${useLiveCoordinates ? 'bg-blue-500' : 'bg-gray-300'}`}>
+                 <div className={`w-5 h-5 bg-white rounded-full shadow-md transform transition-transform duration-300 ${useLiveCoordinates ? 'translate-x-6' : 'translate-x-1'}`}></div>
+               </div>
+             </div>
+             <span className="text-sm font-medium text-gray-700">
+               Use Live Coordinates
+             </span>
+           </label>
+           <p className="text-xs text-gray-500 mt-1 ml-15">
+             {useLiveCoordinates ? 'Using your current location' : 'Using Toronto coordinates'}
+           </p>
+         </div>
+       </div>
 
       {/* Content */}
       <div className="p-8 space-y-10 overflow-y-auto h-full pb-32">
@@ -477,13 +503,45 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [useLiveCoordinates, setUseLiveCoordinates] = useState(false);
+  const [userLocation, setUserLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [currentCity, setCurrentCity] = useState("Toronto");
+  const [isFetching, setIsFetching] = useState(false);
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
 
   // Your exact location coordinates
-  const TORONTO_LAT = 43.6548;
-  const TORONTO_LNG = -79.3883;
+  const TORONTO_LAT = 43.6469;  
+  const TORONTO_LNG = -79.3775;
   const RADIUS_KM = 8; // Adjust this value to change boundary size
+
+  // Get user's current location
+  const getUserLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          setUserLocation({ lat: latitude, lng: longitude });
+          console.log('User location obtained:', { lat: latitude, lng: longitude });
+        },
+        (error) => {
+          console.error('Error getting user location:', error);
+          setUseLiveCoordinates(false);
+        }
+      );
+    } else {
+      console.log('Geolocation not supported');
+      setUseLiveCoordinates(false);
+    }
+  };
+
+  // Get current coordinates based on toggle
+  const getCurrentCoordinates = () => {
+    if (useLiveCoordinates && userLocation) {
+      return userLocation;
+    }
+    return { lat: TORONTO_LAT, lng: TORONTO_LNG };
+  };
 
   // Update filtered locations when locations or filters change
   useEffect(() => {
@@ -499,6 +557,45 @@ export default function HomePage() {
   useEffect(() => {
     addMarkersToMap(filteredLocations);
   }, [filteredLocations]);
+
+  // Get user location when component mounts
+  useEffect(() => {
+    getUserLocation();
+  }, []);
+
+  // Update when coordinates change
+  useEffect(() => {
+    const coords = getCurrentCoordinates();
+    console.log('📍 Current coordinates:', { lat: coords.lat, lng: coords.lng });
+    console.log('📍 Live coordinates enabled:', useLiveCoordinates);
+    console.log('📍 User location:', userLocation);
+    fetchLocations(coords.lat, coords.lng);
+    if (map.current) {
+      console.log('🗺️ Attempting to center map on:', [coords.lng, coords.lat]);
+      // Remove existing constraints if using live coordinates
+      if (useLiveCoordinates) {
+        console.log('🗺️ Removing map constraints for live coordinates...');
+        try {
+          // Remove bounds constraints
+          (map.current as any).setMaxBounds(null);
+          // Remove zoom constraints  
+          (map.current as any).setMaxZoom(null);
+        } catch (e) {
+          console.log('Could not remove constraints:', e);
+        }
+      }
+      
+      // Use flyTo for smoother and more reliable centering
+      map.current.flyTo({
+        center: [coords.lng, coords.lat],
+        zoom: 16.2, // More zoomed out to see the area
+        duration: 2000
+      });
+      
+      // Add constraints for both Toronto and live coordinates
+      addMapConstraints(coords.lat, coords.lng);
+    }
+  }, [useLiveCoordinates, userLocation]);
 
   const handleFilterChange = (filters: string[]) => {
     setActiveFilters(filters);
@@ -518,10 +615,11 @@ export default function HomePage() {
   };
 
   useEffect(() => {
-    // Use downtown Toronto as the center
-    console.log('Initializing map with Toronto coordinates:', { lat: TORONTO_LAT, lng: TORONTO_LNG });
-    fetchLocations(TORONTO_LAT, TORONTO_LNG);
-    initializeMap(TORONTO_LNG, TORONTO_LAT);
+    // Use current coordinates as the center
+    const coords = getCurrentCoordinates();
+    console.log('Initializing map with coordinates:', coords);
+    fetchLocations(coords.lat, coords.lng);
+    initializeMap(coords.lng, coords.lat);
   }, []);
 
   const initializeMap = (lng: number, lat: number) => {
@@ -583,8 +681,8 @@ export default function HomePage() {
             }
           });
 
-          // Add map constraints to keep view within 10km radius
-          addMapConstraints(lat, lng);
+          // TEMPORARILY DISABLED - Add map constraints to keep view within 10km radius
+          // addMapConstraints(lat, lng);
         }
     });
   };
@@ -607,8 +705,8 @@ export default function HomePage() {
     // Set the map bounds to constrain the view
     map.current.setMaxBounds(bounds);
     
-    // Also set a maximum zoom level to prevent zooming out too far
-    map.current.setMaxZoom(16);
+    // Set a higher max zoom level to allow more zooming in
+    map.current.setMaxZoom(20);
     
     // Add center point marker
     const centerMarkerEl = document.createElement('div');
@@ -634,8 +732,14 @@ export default function HomePage() {
   };
 
   const fetchLocations = async (lat: number, lon: number) => {
+    if (isFetching) {
+      console.log('🚫 Skipping API call - already fetching');
+      return;
+    }
     try {
+      setIsFetching(true);
       setLoading(true);
+      console.log('🔄 Starting API call, loading screen should be visible');
       console.log('Fetching locations for:', { lat, lon });
       const response = await fetch(`http://localhost:8000/api/locations?lat=${lat}&lon=${lon}&t=${Date.now()}`);
       if (!response.ok) {
@@ -654,11 +758,15 @@ export default function HomePage() {
         });
       });
       setLocations(data);
+      setCurrentCity(data[data.length - 1]?.city || "Toronto");
+      console.log('✅ API call completed, setting loading to false');
+      setLoading(false);
+      setIsFetching(false);
       // Filtered locations will be updated automatically by the useEffect
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
-    } finally {
       setLoading(false);
+      setIsFetching(false);
     }
   };
 
@@ -750,7 +858,21 @@ export default function HomePage() {
 
   return (
     <div className="h-screen w-screen relative bg-gray-25">
-      <Sidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} locations={locations} activeFilters={activeFilters} onFilterChange={handleFilterChange} recentLocations={recentLocations} onLocationSelect={setSelectedLocation} />
+      <Sidebar 
+        isOpen={sidebarOpen} 
+        onToggle={() => setSidebarOpen(!sidebarOpen)} 
+        locations={locations} 
+        activeFilters={activeFilters} 
+        onFilterChange={handleFilterChange} 
+        recentLocations={recentLocations} 
+        onLocationSelect={setSelectedLocation}
+        useLiveCoordinates={useLiveCoordinates}
+        onToggleLiveCoordinates={() => {
+          setUseLiveCoordinates(!useLiveCoordinates);
+          setLoading(true); // Show loading immediately when toggle is switched
+        }}
+        currentCity={currentCity}
+      />
 
       {/* Map Container - adjusted to account for sidebar being open by default */}
       <div className={`h-full w-full transition-all duration-700 ease-out ${sidebarOpen ? "ml-96" : "ml-0"}`}>
