@@ -34,29 +34,36 @@ The system uses **LangGraph/LangChain** to orchestrate complex AI workflows that
    - **Real-time Service Mapping**: Converts 311 requests into map POIs showing infrastructure issues, community concerns, and local developments
 
 3. **News & Events Discovery Agent**
-   - Aggregates data from multiple news APIs and event platforms
-   - Performs temporal analysis to prioritize recent and upcoming events
-   - Extracts location-specific context and relevance scoring
+   - **Enhanced Event Detection**: Uses 8 targeted search queries for events, openings, festivals, and "things to do"
+   - **Opening & Launch Tracking**: Specifically searches for new restaurant openings, business launches, and grand openings
+   - **Activity Discovery**: Focuses on local activities, attractions, and entertainment venues
+   - **LLM Location Extraction**: Uses GPT-4 to extract real locations from news articles
+   - **Content Filtering**: Prioritizes lifestyle and entertainment content over business news
+   - **Temporal Relevance**: Prioritizes recent events and upcoming activities with date-based scoring
 
 
 ### Intelligent Geocoding Pipeline
 
-The geocoding system uses a staged fallback (this is the exact order implemented in code):
+The geocoding system uses a 5-stage fallback (this is the exact order implemented in code):
 
 ```
-Primary: Serper Knowledge Graph (pulls address directly when available)
+Stage 1: Serper Knowledge Graph (pulls address directly when available)
     ↓ (if not found)
-Secondary: Site-specific Serper searches (Google Maps / Yelp / YellowPages / Facebook) 
-           + HTML scraping with BeautifulSoup + LLM ranking of candidate addresses
+Stage 2: Site-specific Serper searches (Google Maps / Yelp / YellowPages / Facebook / OpenTable) 
+           + HTML scraping with BeautifulSoup + address extraction
     ↓ (if still unresolved)
-Tertiary: Google Places API (FindPlaceFromText)
+Stage 3: LLM ranking of candidate addresses using GPT-4
     ↓ (if still unresolved)
-Quaternary: OpenStreetMap (Nominatim) text search
+Stage 4: Google Places API (FindPlaceFromText)
+    ↓ (if still unresolved)
+Stage 5: OpenStreetMap (Nominatim) text search
 ```
 
 Each geocoding attempt includes:
 - **City boundary validation** using Mapbox API to ensure coordinates are within target area
-- **LLM-assisted address ranking** (only in Step 2) to select the most relevant result from candidate addresses
+- **LLM-assisted address ranking** (in Stage 3) to select the most relevant result from candidate addresses
+- **HTML scraping** from 6 different platforms for address extraction
+- **Regex pattern matching** for address validation
 - **Multiple provider strategies** before giving up (returns `None` on total failure)
 
 ### Real-Time Data Processing
@@ -131,7 +138,7 @@ This architecture enables the system to provide highly accurate, contextually re
 
 ### Data Sources
 - **Reddit**: Community recommendations and discussions
-- **News APIs**: Current events and local happenings
+- **Enhanced News APIs**: Events, openings, festivals, and "things to do" with LLM location extraction
 - **311 Services**: Municipal service requests and issues
 - **Event APIs**: Upcoming activities and gatherings
 
