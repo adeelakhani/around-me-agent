@@ -5,8 +5,17 @@ from typing import List, Dict, Any
 import re
 load_dotenv(override=True)
 
-def get_news_for_city(city: str, province: str, country: str, lat: float, lng: float) -> list:
-    """Get news articles as POIs using NewsAPI.ai with proper location extraction"""
+def get_news_for_city(city: str, province: str, country: str, lat: float, lng: float, max_pois_per_article: int = 3) -> list:
+    """Get news articles as POIs using NewsAPI.ai with proper location extraction
+    
+    Args:
+        city: City name
+        province: Province/state name  
+        country: Country name
+        lat: City latitude
+        lng: City longitude
+        max_pois_per_article: Maximum number of POIs to extract per article (default: 3)
+    """
     news_api_key = os.getenv("NEWS_API_KEY")
     if not news_api_key:
         print("❌ NEWS_API_KEY not found in environment variables")
@@ -16,68 +25,30 @@ def get_news_for_city(city: str, province: str, country: str, lat: float, lng: f
     
     keyword = f"{city} {province}"
     
+    # Enhanced search queries focused on events, openings, and things to do with locations
     search_queries = [
-        f"{city} festival",
-        f"{city} concert",
         f"{city} event",
-        f"{city} show",
-        f"{city} performance",
-        f"{city} exhibition",
-        f"{city} launch",
         f"{city} opening",
-        f"{city} happening",
-        f"{city} tonight",
-        f"{city} this weekend",
-        f"{city} local event",
-        f"{city} community event",
-        f"{city} street festival",
-        f"{city} food festival",
-        f"{city} music festival",
-        f"{city} art show",
-        f"{city} theater production",
-        f"{city} museum exhibit",
-        f"{city} gallery opening",
-        f"{city} pop-up",
-        f"{city} fair",
-        f"{city} celebration",
-        
-        # Relevant local queries (the good ones from before)
-        f"{city} sports",
-        f"{city} culture",
+        f"{city} new restaurant",
+        f"{city} things to do",
         f"{city} entertainment",
-        f"{city} restaurants",
-        f"{city} food",
-        f"{city} dining",
-        f"{city} cafe",
-        f"{city} bar",
-        f"{city} theater",
-        f"{city} museum",
-        f"{city} park",
-        f"{city} shopping",
-        f"{city} market",
-        f"{city} downtown",
-        f"{city} neighborhood",
-        f"{city} community",
         f"{city} local",
-        f"{city} new business",
-        f"{city} restaurant opening",
-        f"{city} construction",
-        f"{city} development"
+        f"{city} downtown",
+        f"{city} festival"
     ]
     
-    # Add date filtering to get recent articles
+    # Reduced date range and article count to save tokens
     from datetime import datetime, timedelta
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=7)  # Get articles from last 7 days
+    start_date = end_date - timedelta(days=30)  # Get articles from last month only
     
     params = {
         "resultType": "articles",
         "keyword": keyword,
         "lang": "eng",
         "articlesSortBy": "date",
-        "articlesCount": 15,
+        "articlesCount": 5,
         "apiKey": news_api_key,
-        "isDuplicate": False,
         "dataType": ["news", "blog", "pr"],
         "locationUri": f"http://en.wikipedia.org/wiki/{city.replace(' ', '_')}",
         "dateStart": start_date.strftime("%Y-%m-%d"),
@@ -103,48 +74,85 @@ def get_news_for_city(city: str, province: str, country: str, lat: float, lng: f
             else:
                 print(f"❌ No articles found for query: {query}")
         
+        # STRONG DEDUPLICATION - Create unique article hash based on title and content
         unique_articles = []
-        seen_urls = set()
+        seen_article_hashes = set()
+        
         for article in all_articles:
-            url = article.get('url', '')
-            if url and url not in seen_urls:
+            title = article.get('title', '').strip()
+            body = article.get('body', '').strip()
+            
+            # Create a hash based on title and first 100 chars of body
+            content_for_hash = f"{title}_{body[:100]}"
+            import hashlib
+            article_hash = hashlib.md5(content_for_hash.encode()).hexdigest()
+            
+            # Also check for similar titles (case-insensitive) - MORE AGGRESSIVE
+            title_lower = title.lower().strip()
+            is_duplicate = False
+            
+            for existing_article in unique_articles:
+                existing_title = existing_article.get('title', '').lower().strip()
+                # If titles are very similar OR contain the same key words, consider it a duplicate
+                if (title_lower == existing_title or 
+                    title_lower in existing_title or 
+                    existing_title in title_lower or
+                    # Check if they share key words (3+ words in common)
+                    len(set(title_lower.split()) & set(existing_title.split())) >= 3):
+                    is_duplicate = True
+                    print(f"❌ Skipped similar title: {title[:50]}...")
+                    break
+            
+            if article_hash not in seen_article_hashes and not is_duplicate:
                 unique_articles.append(article)
-                seen_urls.add(url)
+                seen_article_hashes.add(article_hash)
+                print(f"✅ Added unique article: {title[:50]}...")
+            else:
+                if is_duplicate:
+                    print(f"❌ Skipped similar title: {title[:50]}...")
+                else:
+                    print(f"❌ Skipped duplicate hash: {title[:50]}...")
         
         filtered_articles = filter_relevant_articles(unique_articles, city)
-        articles = filtered_articles[:25]
+        articles = filtered_articles[:10]  # Reduced from 20 to save tokens
         
         print(f"📰 Found {len(articles)} unique articles from NewsAPI.ai")
         
         if articles:
             first_article = articles[0]
-            print(f"🔍 First article keys: {list(first_article.keys())}")
             print(f"🔍 First article title: {first_article.get('title', 'No title')}")
-            print(f"🔍 First article entities: {first_article.get('entities', 'No entities')}")
         
         news_pois = []
-        seen_articles = set()
         
         for article in articles:
-            article_id = f"{article.get('title', '')}_{article.get('url', '')}"
-            if article_id in seen_articles:
-                continue
-            seen_articles.add(article_id)
+            print(f"\n🔍 Processing article: {article.get('title', 'No title')[:60]}...")
             
-            location_entities = extract_location_entities(article)
-            
-            if location_entities:
-                for location in location_entities:
+            # Use LLM to extract real locations from article content
+            content_locations = extract_locations_from_content(article, city, province, country, max_pois_per_article)
+            if content_locations:
+                print(f"   ✅ Found {len(content_locations)} locations from LLM extraction")
+                for location in content_locations:
                     poi = create_news_poi(article, location, city)
                     if poi:
                         news_pois.append(poi)
+                        print(f"   ✅ Created POI from LLM: {location['name']} at {location['lat']:.4f}, {location['lng']:.4f}")
             else:
-                poi = create_fallback_news_poi(article, lat, lng, city)
-                if poi:
-                    news_pois.append(poi)
+                # NO FAKE COORDINATES - skip articles without real locations
+                print(f"   ❌ Skipped article without real location: {article.get('title', 'No title')[:50]}...")
         
-        print(f"✅ Created {len(news_pois)} news POIs with proper location extraction")
-        return news_pois
+        # FINAL DEDUPLICATION - Remove any remaining duplicates by name
+        final_pois = []
+        seen_names = set()
+        for poi in news_pois:
+            name_lower = poi['name'].lower().strip()
+            if name_lower not in seen_names:
+                final_pois.append(poi)
+                seen_names.add(name_lower)
+            else:
+                print(f"❌ Final dedup: Skipped duplicate name: {poi['name']}")
+        
+        print(f"✅ Created {len(final_pois)} unique news POIs with real geocoding")
+        return final_pois
         
     except Exception as e:
         print(f"❌ Error fetching news from NewsAPI.ai: {e}")
@@ -155,19 +163,29 @@ def get_news_for_city(city: str, province: str, country: str, lat: float, lng: f
 def filter_relevant_articles(articles: List[Dict[str, Any]], city: str) -> List[Dict[str, Any]]:
     """Filter articles to prioritize local lifestyle news over business/financial news"""
     relevant_keywords = [
-        'restaurant', 'cafe', 'bar', 'food', 'dining', 'eat', 'drink',
-        'event', 'festival', 'concert', 'show', 'performance', 'theater', 'museum',
-        'park', 'trail', 'outdoor', 'recreation', 'sports', 'fitness', 'gym',
-        'shopping', 'market', 'store', 'mall', 'plaza', 'district',
-        'transit', 'subway', 'bus', 'train', 'transportation',
-        'weather', 'climate', 'temperature',
+        # Events and activities
+        'event', 'festival', 'concert', 'show', 'performance', 'theater', 'museum', 'exhibition',
+        'opening', 'launch', 'grand opening', 'ribbon cutting', 'ceremony',
+        'things to do', 'activities', 'attractions', 'tourist', 'visitor',
+        'entertainment', 'nightlife', 'party', 'celebration', 'gathering',
+        
+        # Food and dining
+        'restaurant', 'cafe', 'bar', 'food', 'dining', 'eat', 'drink', 'bistro', 'pub',
+        'new restaurant', 'opening soon', 'coming soon', 'soft opening',
+        
+        # Recreation and lifestyle
+        'park', 'trail', 'outdoor', 'recreation', 'sports', 'fitness', 'gym', 'studio',
+        'shopping', 'market', 'store', 'mall', 'plaza', 'district', 'boutique',
+        
+        # Culture and arts
+        'culture', 'arts', 'music', 'film', 'art', 'gallery', 'venue', 'stage',
         'community', 'neighborhood', 'local', 'downtown', 'uptown',
-        'street', 'avenue', 'road', 'area', 'district',
-        'culture', 'arts', 'entertainment', 'music', 'film', 'art',
-        'school', 'university', 'college', 'education',
-        'hospital', 'health', 'medical', 'clinic',
-        'police', 'fire', 'emergency', 'safety',
-        'construction', 'development', 'building', 'project'
+        
+        # Transportation and accessibility
+        'transit', 'subway', 'bus', 'train', 'transportation', 'station', 'stop',
+        
+        # Development and new places
+        'construction', 'development', 'building', 'project', 'renovation', 'expansion'
     ]
     
     business_keywords = [
@@ -197,7 +215,8 @@ def filter_relevant_articles(articles: List[Dict[str, Any]], city: str) -> List[
                 relevance_score -= 1
         
         source = article.get('source', {}).get('title', '').lower()
-        local_sources = ['toronto', 'star', 'sun', 'globe', 'mail', 'post', 'news', 'times']
+        # Generic local news sources that work for any city
+        local_sources = ['star', 'sun', 'globe', 'mail', 'post', 'news', 'times', 'herald', 'tribune', 'journal', 'gazette']
         for local_source in local_sources:
             if local_source in source:
                 relevance_score += 3
@@ -212,73 +231,115 @@ def filter_relevant_articles(articles: List[Dict[str, Any]], city: str) -> List[
     
     return [article for article, score in scored_articles]
 
-def extract_location_entities(article: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Extract location entities from NewsAPI.ai article response"""
-    locations = []
-    
-    print(f"🔍 Analyzing article: {article.get('title', 'No title')[:50]}...")
-    
-    entities = article.get("entities", {})
-    print(f"📊 Entities found: {list(entities.keys()) if entities else 'None'}")
-    
-    location_entities = []
-    if entities:
-        location_entities = (
-            entities.get("locations", []) or 
-            entities.get("location", []) or 
-            entities.get("place", []) or
-            []
-        )
-    
-    print(f"📍 Location entities: {len(location_entities) if location_entities else 0}")
-    
-    if location_entities:
-        for i, location in enumerate(location_entities):
-            print(f"   Location {i+1}: {location}")
-            location_data = {
-                "name": location.get("name", ""),
-                "lat": location.get("lat"),
-                "lng": location.get("lng"),
-                "type": location.get("type", "location"),
-                "confidence": location.get("confidence", 0)
-            }
-            
-            print(f"   Extracted: {location_data}")
-            
-            if location_data["lat"] and location_data["lng"]:
-                locations.append(location_data)
-                print(f"   ✅ Added location with coordinates: {location_data['name']}")
-            else:
-                print(f"   ❌ Skipped location without coordinates: {location_data['name']}")
-    
-    if not locations:
-        print("   🔍 No location entities found, trying content extraction...")
-        locations = extract_locations_from_content(article)
-    
-    print(f"   📍 Final locations found: {len(locations)}")
-    return locations
 
-def extract_locations_from_content(article: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Extract location mentions from article content using regex patterns"""
-    locations = []
+
+def extract_locations_from_content(article: Dict[str, Any], city: str, province: str, country: str, max_pois_per_article: int = 3) -> List[Dict[str, Any]]:
+    """Use LLM to extract real locations from article content"""
+    from openai import OpenAI
+    import os
+    
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
     title = article.get("title", "")
     body = article.get("body", "")
-    content = f"{title} {body}"
+    content = f"Title: {title}\n\nBody: {body}"
     
-    location_patterns = [
-        r"(\w+\s+Restaurant|\w+\s+Cafe|\w+\s+Bar|\w+\s+Theater|\w+\s+Museum|\w+\s+Park)",
-        r"(\w+\s+Street|\w+\s+Avenue|\w+\s+Boulevard)",
-        r"(\w+\s+District|\w+\s+Neighborhood|\w+\s+Area)",
-        r"(\w+\s+Center|\w+\s+Plaza|\w+\s+Mall)"
-    ]
+    prompt = f"""
+    Extract ONLY real, specific location names from this news article about {city}, {province}, {country}.
     
-    for pattern in location_patterns:
-        matches = re.findall(pattern, content, re.IGNORECASE)
-        for match in matches:
-            pass
+    Return ONLY the names of actual places, venues, businesses, streets, neighborhoods, or landmarks mentioned in the article.
+    Examples: restaurants, cafes, theaters, museums, parks, shopping centers, stadiums, universities, hospitals, specific street names, neighborhood names, business names, etc.
     
-    return locations
+    Do NOT include generic terms, partial matches, or non-location words.
+    
+    IMPORTANT: Format location names as they would appear in Google Maps search.
+    - Use full business names: "Casa Loma" not "Casa"
+    - Use proper venue names: "Toronto Hydro" not "Hydro"
+    - Use street names with type: "King Street West" not "King"
+    - Use neighborhood names: "Yorkville" not "York"
+    
+    Format: Return a simple list of location names, one per line.
+    
+    Article:
+    {content}
+    
+    Real locations found:
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.1
+        )
+        
+        locations_text = response.choices[0].message.content.strip()
+        location_names = [name.strip() for name in locations_text.split('\n') if name.strip()]
+        
+        print(f"   🤖 LLM found {len(location_names)} potential locations: {location_names}")
+        
+        locations = []
+        # Only geocode the first N locations to save time (configurable)
+        for location_name in location_names[:max_pois_per_article]:
+            if location_name and len(location_name) > 2:  # Skip very short names
+                geocoded_location = geocode_location(location_name, city, province, country)
+                if geocoded_location:
+                    locations.append(geocoded_location)
+                    print(f"   ✅ Geocoded: {location_name} -> {geocoded_location['lat']:.4f}, {geocoded_location['lng']:.4f}")
+                else:
+                    print(f"   ❌ Failed to geocode: {location_name}")
+        
+        return locations
+        
+    except Exception as e:
+        print(f"   ❌ LLM extraction error: {e}")
+        return []
+
+def geocode_location(location_name: str, city: str, province: str, country: str) -> Dict[str, Any]:
+    """Simple, fast geocoding using Google Places API directly"""
+    print(f"   🗺️ Quick geocoding: {location_name}")
+    
+    try:
+        google_api_key = os.getenv("GOOGLE_PLACES_API_KEY")
+        if not google_api_key:
+            print(f"   ❌ No Google Places API key")
+            return None
+        
+        # Simple search with city context
+        search_input = f"{location_name}, {city}"
+        
+        url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        params = {
+            "input": search_input,
+            "inputtype": "textquery",
+            "fields": "geometry/location,name",
+            "key": google_api_key
+        }
+        
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+        result = response.json()
+        
+        if result.get("status") == "OK" and result.get("candidates"):
+            location = result["candidates"][0]["geometry"]["location"]
+            lat = location["lat"]
+            lng = location["lng"]
+            
+            return {
+                "name": location_name,
+                "lat": lat,
+                "lng": lng,
+                "type": "geocoded",
+                "confidence": 0.8
+            }
+        else:
+            print(f"   ❌ No results for: {location_name}")
+            return None
+            
+    except Exception as e:
+        print(f"   ❌ Geocoding error: {e}")
+        return None
 
 def create_news_poi(article: Dict[str, Any], location: Dict[str, Any], city: str) -> Dict[str, Any]:
     """Create a POI from a news article with specific location data"""
@@ -304,56 +365,7 @@ def create_news_poi(article: Dict[str, Any], location: Dict[str, Any], city: str
     
     return poi
 
-def create_fallback_news_poi(article: Dict[str, Any], lat: float, lng: float, city: str) -> Dict[str, Any]:
-    """Create a fallback POI when no specific location is found"""
-    title = article.get("title", "")
-    body = article.get("body", "")
-    source = article.get("source", {}).get("title", "Unknown Source")
-    url = article.get("url", "")
-    date = article.get("date", "")
-    
-    name = extract_meaningful_name(title, city)
-    
-    summary = create_authentic_news_summary(title, body, source, name, date)
-    
-    import random
-    lat_variation = random.uniform(-0.01, 0.01)
-    lng_variation = random.uniform(-0.01, 0.01)
-    
-    poi = {
-        "name": name,
-        "lat": lat + lat_variation,
-        "lng": lng + lng_variation,
-        "summary": summary,
-        "type": "news",
-        "radius": 20,
-        "source": source,
-        "url": url,
-        "date": date
-    }
-    
-    return poi
 
-def extract_meaningful_name(title: str, city: str) -> str:
-    """Extract a meaningful name from article title"""
-    title = re.sub(r'^(Breaking|Update|News|Latest):\s*', '', title, flags=re.IGNORECASE)
-    
-    business_patterns = [
-        r"(\w+\s+Restaurant|\w+\s+Cafe|\w+\s+Bar|\w+\s+Theater|\w+\s+Museum|\w+\s+Park)",
-        r"(\w+\s+Center|\w+\s+Plaza|\w+\s+Mall|\w+\s+District)",
-        r"(\w+\s+Street|\w+\s+Avenue|\w+\s+Boulevard)"
-    ]
-    
-    for pattern in business_patterns:
-        match = re.search(pattern, title, re.IGNORECASE)
-        if match:
-            return match.group(1)
-    
-    words = title.split()
-    if len(words) > 3:
-        return " ".join(words[:4])
-    else:
-        return title
 
 def create_authentic_news_summary(title: str, body: str, source: str, location_name: str, date: str = "") -> str:
     """Create an authentic news summary using actual article content"""
