@@ -1,6 +1,6 @@
 # AroundMe Agent
 
-A sophisticated AI-powered location discovery platform that combines multiple data sources to provide real-time insights about interesting places, events, and activities in any city or YOUR current city(based off of your location). Built with modern AI agents, web scraping, and interactive mapping.
+A sophisticated AI-powered location discovery platform that combines multiple data sources to provide real-time insights about interesting places, events, and activities in any city(based off of your location). Built with modern AI agents, web scraping, and interactive mapping.
 
 ## Overview
 
