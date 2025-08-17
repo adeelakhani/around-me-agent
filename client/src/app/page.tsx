@@ -390,7 +390,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
        </div>
 
       {/* Content */}
-      <div className="p-8 space-y-10 overflow-y-auto h-full pb-32">
+      <div className="p-8 space-y-8 overflow-y-auto h-full pb-32">
         {/* Statistics */}
         <div>
           <h3 className="text-lg font-light text-gray-900 mb-6 tracking-tight">Overview</h3>
@@ -450,8 +450,8 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
 
         {/* Recent Activity */}
         <div>
-          <h3 className="text-lg font-light text-gray-900 mb-6 tracking-tight">Recent Activity</h3>
-          <div className="space-y-4">
+          <h3 className="text-lg font-light text-gray-900 mb-4 tracking-tight">Recent Activity</h3>
+          <div className="space-y-3">
             {recentLocations.length > 0 ? (
               recentLocations.map((location, idx) => {
                 const theme = getThemeColors(location.type);
@@ -459,7 +459,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
                   <button
                     key={idx}
                     onClick={() => onLocationSelect(location)}
-                    className="w-full bg-white/50 rounded-2xl p-5 border border-gray-100/50 hover:bg-white/70 transition-all duration-200 text-left cursor-pointer"
+                    className="w-full bg-white/50 rounded-2xl p-4 border border-gray-100/50 hover:bg-white/70 transition-all duration-200 text-left cursor-pointer"
                   >
                     <div className="flex items-start space-x-4">
                       <div 
@@ -479,7 +479,7 @@ const Sidebar = ({ isOpen, onToggle, locations, activeFilters, onFilterChange, r
                 );
               })
             ) : (
-              <div className="bg-white/50 rounded-2xl p-5 border border-gray-100/50">
+              <div className="bg-white/50 rounded-2xl p-4 border border-gray-100/50">
                 <div className="text-center">
                   <div className="text-gray-400 text-sm font-light tracking-wide">
                     Click on map markers to see recent activity
@@ -892,6 +892,29 @@ export default function HomePage() {
         )}
 
         <div ref={mapContainer} className="h-full w-full" />
+
+        <div className="absolute top-8 right-8 z-10">
+          <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-gray-100/50 shadow-lg p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 rounded-full bg-purple-500 shadow-sm"></div>
+                <span className="text-xs font-light text-gray-700 tracking-wide">Events</span>
+              </div>
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 rounded-full bg-red-500 shadow-sm"></div>
+                <span className="text-xs font-light text-gray-700 tracking-wide">News</span>
+              </div>
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 rounded-full bg-orange-500 shadow-sm"></div>
+                <span className="text-xs font-light text-gray-700 tracking-wide">Reddit</span>
+              </div>
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm"></div>
+                <span className="text-xs font-light text-gray-700 tracking-wide">Services</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {!sidebarOpen && (
           <div className="absolute top-8 left-8 z-10">
